@@ -1,0 +1,967 @@
+#!/usr/bin/env python3
+"""Sage — the assistant UI (Streamlit).
+
+Retrieval, chunking, ranking, link resolution and file handling live in the `sage`
+package so they can be unit-tested without Streamlit. This module is only the view:
+session state, layout, and the tool loop that drives them.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import html
+import logging
+import os
+
+import streamlit as st
+import streamlit.components.v1 as components
+
+from sage import (
+    config,
+    context,
+    engine,
+    feedback,
+    files,
+    history,
+    links,
+    llm,
+    profiles,
+    providers,
+)
+from sage import corpus as corpus_mod
+from sage.search import Index
+
+logging.basicConfig(
+    level=getattr(logging, config.LOG_LEVEL, logging.WARNING),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("sage.app")
+
+STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+def setting(name: str, default: str = "") -> str:
+    """A deployment setting from the environment, falling back to `st.secrets`.
+
+    Community Cloud does surface root-level secrets as environment variables, but
+    this does not rely on that having happened by the time this module is imported.
+    Community Cloud does surface root-level secrets as environment variables, but
+    reading both is one line and removes the question of whether it had happened
+    by the time this module was imported.
+
+    Safe before `set_page_config` — `st.secrets` enqueues nothing, and the
+    page title and icon below are the profile's.
+    """
+    value = os.getenv(name, "").strip()
+    if value:
+        return value
+    try:
+        return str(st.secrets.get(name, default)).strip()
+    except Exception:  # no secrets.toml present
+        return default
+
+
+# Which assistant this is: corpus, prompt, tool copy, starter cards and brand.
+# There is one profile in this repository, and `SAGE_PROFILE` cannot select another.
+PROFILE = profiles.get(setting("SAGE_PROFILE", profiles.DEFAULT).lower())
+SYSTEM_PROMPT = PROFILE.system_prompt
+
+
+def _flag(name: str, default: bool) -> bool:
+    raw = setting(name, "1" if default else "").lower()
+    return raw not in ("", "0", "false", "no")
+
+
+# --- what a public endpoint may do ------------------------------------------
+# Both of these default to the *closed* position, so a deployment that sets nothing
+# is the safe one. The app was written as a personal tool, where an open file
+# ingest and an uncapped question count cost nothing; embedded in a public page they
+# are somebody else's upload and somebody else's bill.
+
+# The composer's attachment picker. Useful when the app is your own tab, an open
+# file-ingest endpoint when it is an iframe on a public site.
+UPLOADS_ON = _flag("SAGE_UPLOADS", False)
+
+# Questions one browser session may ask. Not a security boundary — a new session is
+# a reload away — but it turns "hold the key down and drain the balance" into
+# something deliberate, which is the difference that matters for a metered key.
+# 0 disables the cap.
+SESSION_LIMIT = max(0, int(setting("SAGE_SESSION_LIMIT", "40") or 0))
+
+# (icon, card label, question actually sent). The label is kept short so every
+# card is a single line; the question stays conversational for the model.
+# Replaced further down when the reader arrived from an article — the starter
+# cards are the clearest place to show that the assistant knows which one.
+EXAMPLES = list(PROFILE.examples)
+WELCOME_TITLE = PROFILE.welcome_title
+WELCOME_SUBTITLE = PROFILE.welcome_subtitle
+
+# Offered when the assistant is opened from an article. Deliberately about *this*
+# page rather than the archive: a reader who opened it here has a question about
+# what is in front of them.
+ARTICLE_EXAMPLES = (
+    ("📝", "Summarise it", "Summarise this article in a few sentences."),
+    ("🔢", "The key numbers", "What are the key numbers and results in this article?"),
+    ("🛠️", "How it was done", "What methods, tools or data does this article use?"),
+    ("🔗", "Related articles", "What else on this site is related to this article?"),
+)
+
+st.set_page_config(
+    page_title=PROFILE.page_title,
+    page_icon=PROFILE.page_icon,
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+
+# --- assets ----------------------------------------------------------------
+
+
+@st.cache_resource(show_spinner=False)
+def load_asset(name: str) -> str:
+    try:
+        with open(os.path.join(STATIC, name), encoding="utf-8") as handle:
+            return handle.read()
+    except OSError as exc:
+        logger.error("Missing static asset %s: %s", name, exc)
+        return ""
+
+
+# The profile's brand comes after the stylesheet so its custom properties win.
+st.markdown(
+    f"<style>{load_asset('app.css')}\n{PROFILE.brand_css}</style>",
+    unsafe_allow_html=True,
+)
+components.html(f"<script>{load_asset('app.js')}</script>", height=0)
+
+
+# --- resources -------------------------------------------------------------
+
+
+@st.cache_resource(show_spinner=PROFILE.index_spinner)
+def get_index() -> Index:
+    built = corpus_mod.build(profile=PROFILE)
+    index = Index(built)
+    # The profile is named here, at WARNING, because it is the one fact you need
+    # from a deployment's logs to know it came up as the assistant you meant. At
+    # INFO it would be invisible under the default LOG_LEVEL.
+    logger.warning(
+        "Sage ready: profile=%s, %s", PROFILE.key, corpus_mod.summarize(built)
+    )
+    if not built.chunks:
+        st.error(
+            f"**The `{PROFILE.key}` corpus is empty.** Nothing was found under "
+            f"{', '.join(sorted(PROFILE.paths.values()))}. The assistant would "
+            "answer every question with 'not covered'."
+        )
+        st.stop()
+    return index
+
+
+def resolve_api_key(provider: str) -> str:
+    key = config.api_key(provider)
+    if key:
+        return key
+    try:
+        return str(st.secrets.get(config.API_KEY_VARS[provider], ""))
+    except Exception:  # no secrets.toml present
+        return ""
+
+
+def configured_providers() -> list[str]:
+    """Providers that actually have a key, in preference order."""
+    return [name for name in (providers.MISTRAL, providers.OPENCODE)
+            if resolve_api_key(name)]
+
+
+@st.cache_resource(show_spinner=False)
+def get_provider(name: str):
+    """Cached per provider; the key is read inside so it never becomes a cache key."""
+    return providers.build(name, resolve_api_key(name))
+
+
+@st.cache_resource(show_spinner=False)
+def available_models(name: str) -> list[providers.Model]:
+    try:
+        return get_provider(name).models()
+    except Exception as exc:
+        logger.warning("Could not list models for %s: %s", name, exc)
+        return []
+
+
+READY = configured_providers()
+if not READY:
+    st.error(
+        "**No API key is set.** Provide `MISTRAL_API_KEY` and/or `OPENCODE_API_KEY` "
+        "in the environment or `.streamlit/secrets.toml`, then reload. "
+        "OpenCode Zen keys are free and start with `sk-zen-`."
+    )
+    st.stop()
+
+INDEX = get_index()
+CORPUS = INDEX.corpus
+
+
+def query_param(name: str) -> str:
+    """One query-string value, whichever Streamlit version is installed.
+
+    `st.query_params` arrived in 1.30 and `experimental_get_query_params` is on the
+    way out; reading both means the embed keeps working across an upgrade instead
+    of silently losing the reader's page context, which nothing would report.
+    """
+    try:
+        value = st.query_params.get(name, "")
+    except Exception:
+        try:
+            values = st.experimental_get_query_params().get(name, [])
+        except Exception:
+            return ""
+        value = values[0] if values else ""
+    if isinstance(value, list):
+        value = value[0] if value else ""
+    return str(value or "").strip()
+
+
+# The page the reader opened the assistant from. The website puts it here; the
+# brief it produces is what makes "how does it compare?" answerable.
+CONTEXT_URL = query_param("ctx_url")
+SYSTEM_PROMPT, CONTEXT_DOC = context.apply(SYSTEM_PROMPT, CORPUS, CONTEXT_URL)
+if CONTEXT_DOC is not None:
+    WELCOME_TITLE = "Ask about this article"
+    WELCOME_SUBTITLE = CONTEXT_DOC.title
+    EXAMPLES = list(ARTICLE_EXAMPLES)
+if CONTEXT_URL and CONTEXT_DOC is None:
+    # Worth a line in the log: it means the site and this corpus disagree about a
+    # URL, which is what happens when a post is published and the corpus has not
+    # been re-synced.
+    logger.warning("Unknown ctx_url %r — not in the index", CONTEXT_URL)
+
+for key, default in (
+    ("messages", []),
+    ("processing", False),
+    # A list, not one file. Holding one meant the guard below dropped anything
+    # offered while a file was already attached, and a second attachment looked from
+    # the outside like a control that does nothing.
+    ("attachments", []),
+    # How many times the user has dismissed each uploaded file with a chip's ✕. The
+    # uploader widget still reports them on every rerun — nothing here can reach into
+    # it and remove one — so without this they come straight back on the next run. A
+    # count rather than a flag, so a file that is deliberately re-picked can return
+    # while one merely still being reported cannot.
+    ("dropped_uploads", {}),
+    # Why a file was refused, keyed the same way, so the reason survives a rerun.
+    ("upload_refusals", {}),
+    ("uploader_key", 0),
+    # Bumped by the Clear button. Rendered into the page for app.js, which is the only
+    # side that can reach the text inside Streamlit's chat input.
+    ("clear_token", 0),
+    # Whether the `?q=` the page was opened with has been sent. See ask_from_url.
+    ("asked_from_url", False),
+    # Questions asked this session, against SESSION_LIMIT.
+    ("asked_count", 0),
+    ("error", None),
+    ("error_detail", ""),
+    ("model", ""),
+    ("notice", ""),
+):
+    st.session_state.setdefault(key, default)
+
+
+def model_options() -> list[providers.Model]:
+    options: list[providers.Model] = []
+    for name in READY:
+        options.extend(available_models(name))
+    return options
+
+
+MODELS = model_options()
+
+
+def current_model() -> providers.Model:
+    """The selected model, falling back to the configured default then anything."""
+    for candidate in (st.session_state.model, config.DEFAULT_MODEL):
+        chosen = providers.parse_key(candidate)
+        if chosen and any(option.key == chosen.key for option in MODELS):
+            return chosen
+    if MODELS:
+        return MODELS[0]
+    return providers.Model(READY[0], config.MODEL)
+
+
+MODEL = current_model()
+st.session_state.model = MODEL.key
+
+
+# Streamlit signals "stop this script and start again" by raising. Matched by class
+# name rather than imported, because the module those classes live in has moved
+# between versions (`scriptrunner.script_runner` → `scriptrunner_utils.exceptions`)
+# and because the test stub raises its own equivalents — a name test covers all
+# three, an import covers whichever one happened to be installed when it was written.
+CONTROL_FLOW_NAMES = frozenset(
+    {"RerunException", "StopException", "Rerun", "Stop", "RerunError"}
+)
+
+
+def is_control_flow(exc: BaseException) -> bool:
+    return type(exc).__name__ in CONTROL_FLOW_NAMES
+
+
+# --- rendering helpers -----------------------------------------------------
+
+
+def escape(text: str) -> str:
+    return html.escape(text, quote=False).replace("\n", "<br>")
+
+
+def render_user(message: dict) -> None:
+    badge = "".join(
+        f'<div class="attachment-badge">{item.icon} '
+        f"{html.escape(item.filename)}</div>"
+        for item in (message.get("attachments") or [])
+    )
+    st.markdown(
+        f'<div class="user-message"><div class="user-bubble">{badge}'
+        f'{escape(message.get("text", ""))}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def related_sections(sources: list[dict], limit: int = 3) -> list[dict]:
+    """Sibling sections of the pages actually cited — discovery for free.
+
+    No extra model call: the chunks are already indexed, so neighbouring sections
+    of a cited page are known and are always real documentation.
+    """
+    cited = {source["id"] for source in sources}
+    pages = {source["id"].split("#", 1)[0] for source in sources}
+    out: list[dict] = []
+    for chunk in CORPUS.chunks:
+        if len(out) >= limit:
+            break
+        page = f"{chunk.source}/{chunk.path}"
+        if page in pages and chunk.id not in cited and chunk.heading:
+            out.append({"label": chunk.heading, "url": chunk.url})
+    return out
+
+
+def render_sources(sources: list[dict], related: list[dict]) -> None:
+    if not sources:
+        return
+    chips = "".join(
+        f'<a class="source-chip" href="{html.escape(source["url"], quote=True)}" '
+        f'target="_blank" rel="noopener noreferrer">{html.escape(source["label"])}'
+        f'<span class="source-kind">{html.escape(source["source"])}</span></a>'
+        for source in sources
+    )
+    strip = f'<div class="sources"><span class="sources-label">Sources</span>{chips}</div>'
+
+    if related:
+        more = "".join(
+            f'<a class="source-chip" href="{html.escape(item["url"], quote=True)}" '
+            f'target="_blank" rel="noopener noreferrer">{html.escape(item["label"])}</a>'
+            for item in related
+        )
+        strip += (
+            f'<div class="sources"><span class="sources-label">Related</span>{more}</div>'
+        )
+    st.markdown(strip, unsafe_allow_html=True)
+
+
+def render_rating(position: int, message: dict) -> None:
+    if not feedback.enabled():
+        return
+    if message.get("rating"):
+        st.markdown(
+            '<div class="rating-thanks">Thanks — noted.</div>', unsafe_allow_html=True
+        )
+        return
+
+    with st.container(key=f"rate-{position}"):
+        columns = st.columns([1, 1, 12], gap="small")
+        for column, verdict, glyph, hint in (
+            (columns[0], "up", "👍", "This answered my question"),
+            (columns[1], "down", "👎", "This was wrong or unhelpful"),
+        ):
+            with column:
+                if st.button(glyph, key=f"rate-{position}-{verdict}", help=hint):
+                    question = next(
+                        (
+                            item.get("text", "")
+                            for item in reversed(
+                                st.session_state.messages[:position]
+                            )
+                            if item.get("role") == "user"
+                        ),
+                        "",
+                    )
+                    feedback.record_rating(
+                        verdict,
+                        question,
+                        message.get("text", ""),
+                        message.get("sources", []),
+                    )
+                    message["rating"] = verdict
+                    st.rerun()
+
+
+def render_assistant(position: int, message: dict) -> None:
+    with st.container(key=f"answer-{position}"):
+        with st.chat_message("assistant"):
+            st.markdown(links.fix_links(message.get("text", ""), CORPUS))
+        sources = message.get("sources", [])
+        render_sources(sources, related_sections(sources))
+        render_rating(position, message)
+
+
+def _detail(exc: BaseException | None) -> str:
+    """A one-line, non-secret description of a failure for the details panel."""
+    if exc is None:
+        return ""
+    text = f"{type(exc).__name__}: {exc}"
+    status = getattr(exc, "status_code", None) or getattr(
+        getattr(exc, "response", None), "status_code", None
+    )
+    if status:
+        text = f"{text}  (HTTP {status})"
+    return f"{text}\nmodel={MODEL.key}"[:800]
+
+
+def status_html(text: str) -> str:
+    return (
+        '<div class="status-row" role="status" aria-live="polite">'
+        '<span class="status-dot" aria-hidden="true"></span>'
+        f'<span class="status-text">{html.escape(text)}</span>'
+        '<span class="status-dots" aria-hidden="true"><span></span><span></span>'
+        "<span></span></span></div>"
+    )
+
+
+def show_status(slot, text: str) -> None:
+    slot.empty()
+    with slot.container(), st.chat_message("assistant"):
+        st.markdown(status_html(text), unsafe_allow_html=True)
+
+
+def clearing(stream, slot):
+    """Yield deltas, dropping the status placeholder as soon as text arrives."""
+    cleared = False
+    for delta in stream:
+        if not cleared:
+            slot.empty()
+            cleared = True
+        yield delta
+    if not cleared:
+        slot.empty()
+
+
+def ask_from_url() -> None:
+    """Send the question the website arrived with, once.
+
+    The homepage box, the example chips and the "Ask about this" bubble all open
+    the app with `?q=…`. Asking it here rather than making the reader press send
+    again is the difference between the chip being a shortcut and being a detour.
+
+    Guarded by session state, not by the parameter: Streamlit reruns this script on
+    every interaction and the query string does not change, so without the guard
+    the same question would be re-asked forever.
+    """
+    if st.session_state.asked_from_url or st.session_state.messages:
+        return
+    st.session_state.asked_from_url = True
+    question = query_param("q").strip()
+    if question:
+        start_new_turn(question)
+
+
+def start_new_turn(question: str, attachments=None) -> None:
+    st.session_state.messages.append(
+        {"role": "user", "text": question, "attachments": list(attachments or [])}
+    )
+    # Enforced here rather than at each submit site: the composer, a starter card and
+    # the `?q=` the page can be opened with all arrive through this one function, and
+    # a cap that only covers the composer is not a cap.
+    st.session_state.asked_count += 1
+    if SESSION_LIMIT and st.session_state.asked_count > SESSION_LIMIT:
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "text": (
+                    "That is as far as one session goes. Reload the page to carry on "
+                    "— the conversation starts fresh, but everything published here "
+                    "is still searchable."
+                ),
+                "sources": [],
+                "rating": None,
+                "model": "",
+            }
+        )
+        st.session_state.attachments = []
+        st.session_state.uploader_key += 1
+        st.rerun()
+    st.session_state.processing = True
+    st.session_state.error = None
+    st.session_state.attachments = []
+    # Both, together: the widget is reset so its files stop being reported, and the
+    # dismissal list is emptied because the keys in it refer to a widget that no
+    # longer exists. Leaving stale keys behind would silently refuse a file with the
+    # same name later in the conversation.
+    st.session_state.dropped_uploads = {}
+    st.session_state.upload_refusals = {}
+    st.session_state.uploader_key += 1
+    st.rerun()
+
+
+ask_from_url()
+
+
+# --- composer strip --------------------------------------------------------
+
+# There is deliberately no caveat line under the input. It went from a popover, to
+# three paragraphs under the starter cards, to one 11px line beside the model name,
+# and each version was still a permanent fixture at the bottom of every screen for
+# something read once and then ignored. Neither half of it is lost: every answer
+# carries a Sources strip to the documentation it came from, so "this can be wrong,
+# here is what it read" is attached to the thing that might be wrong; and the system
+# prompt hands out the Help Desk address (`sage/prompts.py`, `sage/tools.py`) in the
+# answer to a question the documentation cannot settle, which is when it is wanted.
+
+has_messages = bool(st.session_state.messages)
+
+
+# There is no model picker. Which model answers is an operational detail of this
+# deployment, not a choice a reader of a blog should be asked to make — and naming
+# it invites "why is it using that one?" about a decision that changes hourly as
+# quotas move. `engine.run_conversation` walks the configured models itself.
+
+
+def render_controls() -> None:
+    """One line under the input: Clear and the model picker, in the right corner.
+
+    This row used to be a bar above the conversation, which was wrong twice over.
+    It sat in the band Streamlit's own full-width header takes the clicks for, so
+    it looked right and did nothing; and on the landing screen — the one screen
+    where a new user has to choose a model before asking anything — the picker
+    inside it did not render at all. Under the input it is beside the thing it
+    affects, on every screen, at the opposite end of the page from that header.
+
+    Clear, then the picker in the corner — it names what will answer, next to the
+    button that sends. Nothing else: every extra row here is a slice of a phone
+    screen spent on furniture, which is how the bottom of this app came to look, in
+    the words of the person using it, nasty.
+
+    One container, not a strip wrapping a row. Two of them meant two sets of layout
+    rules for two elements whose identity depends on which one `st.container(key=…)`
+    hangs the key off — and the inner rule outranked the outer one, which is how the
+    controls ended up stacked in a column in the app while every render in the
+    harness had them in a row.
+
+    No `st.columns`: a column has no intrinsic width, which is how the picker came
+    to be invisible twice. The row is laid out by CSS instead, so each control is
+    as wide as its own label and the worst a broken stylesheet can do is stack them.
+    """
+    with st.container(key="composer-strip"):
+        if has_messages and st.button(
+            "🗑️", key="clear", help="Clear this conversation"
+        ):
+            st.session_state.messages = []
+            st.session_state.processing = False
+            st.session_state.attachments = []
+            st.session_state.dropped_uploads = {}
+            st.session_state.upload_refusals = {}
+            st.session_state.error = None
+            st.session_state.notice = ""
+            st.session_state.uploader_key += 1
+            # Nothing here can empty the composer — the text in it is client-side
+            # state Streamlit only reads on submit — so clearing the conversation left
+            # the last question sitting in the box on the landing screen, over a set of
+            # starter cards, as if it were still about to be sent. app.js empties it
+            # when this counter moves.
+            st.session_state.clear_token += 1
+            st.rerun()
+
+
+# --- body ------------------------------------------------------------------
+
+if not has_messages:
+    st.markdown(
+        f"""
+        <div class="welcome">
+            <h1 class="welcome-title">{escape(WELCOME_TITLE)}</h1>
+            <p class="welcome-subtitle">{escape(WELCOME_SUBTITLE)}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.container(key="examples"):
+        for row in range(0, len(EXAMPLES), 2):
+            columns = st.columns(2, gap="medium")
+            for offset, column in enumerate(columns):
+                position = row + offset
+                if position >= len(EXAMPLES):
+                    continue
+                icon, label, question = EXAMPLES[position]
+                with column, st.container(key=f"example-card-{position}"):
+                    # No `help=`: a tooltip on a card that already says what it
+                    # does is just a black box following the cursor around.
+                    if st.button(
+                        f"{icon} {label}",
+                        key=f"example-{position}",
+                        use_container_width=True,
+                    ):
+                        # With the attachments, like any other question. Without
+                        # them, a file attached on the landing screen — where the
+                        # chips do render — was cleared by the send and never seen.
+                        start_new_turn(question, st.session_state.attachments)
+else:
+    # Marker only: app.js keys page-scroll behaviour off its presence — without it
+    # the screen is the landing screen, which always starts at the top.
+    st.markdown('<div class="chat-container"></div>', unsafe_allow_html=True)
+
+    rendered = st.session_state.messages
+    if st.session_state.processing and rendered and rendered[-1]["role"] == "user":
+        rendered = rendered[:-1]
+
+    for position, message in enumerate(rendered):
+        if message["role"] == "user":
+            render_user(message)
+        elif message.get("text"):
+            render_assistant(position, message)
+
+    if st.session_state.notice:
+        st.markdown(
+            f'<div class="notice">{html.escape(st.session_state.notice)}</div>',
+            unsafe_allow_html=True,
+        )
+
+    if st.session_state.error and not st.session_state.processing:
+        st.markdown(
+            '<div class="error-card" role="alert">'
+            '<div class="error-title">Could not complete that request</div>'
+            f'<div class="error-body">{html.escape(st.session_state.error)}</div></div>',
+            unsafe_allow_html=True,
+        )
+        if st.session_state.error_detail:
+            # Streamlit Cloud logs are awkward to reach; surfacing the real
+            # exception here is what turns "something went wrong" into a fixable
+            # report. Collapsed so it stays out of the way for normal users.
+            with st.expander("Technical details"):
+                st.code(st.session_state.error_detail, language="text")
+        # Retry, and nothing else. By the time this card is on screen the engine
+        # has already tried every configured model, so a "use a different one"
+        # button would offer a choice that does not exist — and would be the one
+        # place a reader learns there are several.
+        with st.container(key="error-actions"):
+            slots = st.columns([1, 2, 1])
+            with slots[1]:
+                retry = st.button("↻ Try again", key="retry", use_container_width=True)
+        if retry:
+            st.session_state.error = None
+            st.session_state.error_detail = ""
+            if st.session_state.messages[-1]["role"] == "user":
+                st.session_state.processing = True
+            st.rerun()
+
+
+# --- input -----------------------------------------------------------------
+
+# `accept_multiple_files`, and no `type=`.
+#
+# The type filter was a list of extensions the picker would offer, and it is gone for
+# the same reason the extension gate in `files.process` went: it refused a pasted
+# screenshot outright (the name app.js gives one is not on any list) and it refused
+# every cluster file whose extension nobody thought of. `files.process` reads the
+# bytes and says yes or no with a reason, which is the check that was doing the work
+# anyway.
+if UPLOADS_ON:
+    upload = st.file_uploader(
+        "Attach a file",
+        accept_multiple_files=True,
+        key=f"uploader-{st.session_state.uploader_key}",
+        label_visibility="collapsed",
+    )
+else:
+    # Not rendered at all rather than rendered disabled. A disabled widget is still
+    # a widget: Streamlit keeps the upload endpoint behind it live, so hiding it in
+    # CSS would leave the door open and only move the handle.
+    upload = []
+
+
+def upload_key(item) -> tuple:
+    """Identity of an uploaded file across reruns.
+
+    Name, size and a digest of the first 4 KB — not Streamlit's `file_id`, which
+    changes on every rerun for the same file in some versions and would re-process and
+    re-append one attachment per interaction with the page.
+
+    The digest is there because name and size alone collided: two different
+    `config.yaml` files of the same length were one attachment, and the second was
+    dropped without a word. 4 KB rather than the whole file so a 10 MB upload is not
+    rehashed on every rerun.
+    """
+    head = item.getvalue()[:4096]
+    return (item.name, item.size, hashlib.blake2b(head, digest_size=8).hexdigest())
+
+
+keyed = [(upload_key(item), item) for item in upload or []]
+offered = {key for key, _item in keyed}
+
+# Dismissals are COUNTED, not just remembered, and the count is how many copies of a
+# file to skip on this run.
+#
+# A plain set of keys blacklisted the file outright, so after dismissing a chip the
+# user could pick the *same file* again and nothing whatsoever happened — no chip, no
+# warning. Worse on the landing screen, where the Clear button that resets this does
+# not render, so there was no route back at all short of reloading the page.
+#
+# Counting keeps the distinction that matters. `accept_multiple_files` accumulates, so
+# a re-picked file is reported twice: one dismissal skips the first copy and the second
+# is a fresh offer and attaches. A file dismissed and not re-picked is still reported
+# once, still skipped, and still does not come back on its own.
+dismissed = dict(st.session_state.dropped_uploads)
+# Keys the widget has stopped reporting cannot come back, so their counts are dead.
+dismissed = {key: count for key, count in dismissed.items() if key in offered}
+
+# Reasons files were refused, so the explanation outlives the run that produced it. A
+# bare `st.warning` is discarded whenever the run ends in a rerun — which it does
+# whenever a file is dropped while an answer is generating — and the refusal was
+# permanent, so the user was left with a file in the uploader, no chip, and no reason.
+refusals = {
+    key: why
+    for key, why in dict(st.session_state.get("upload_refusals", {})).items()
+    if key in offered
+}
+
+held = {item.key for item in st.session_state.attachments if item.key}
+for key, item in keyed:
+    if key in held:
+        continue
+    if dismissed.get(key, 0) > 0:
+        dismissed[key] -= 1
+        continue
+    attachment, error = files.process(item.name, item.getvalue())
+    if not error:
+        # The per-file limit does not bound the total, and a handful of legal
+        # screenshots made one illegal request. Refused here rather than by the
+        # provider, which reports it as "this conversation got too long".
+        attached = sum(held_item.size for held_item in st.session_state.attachments)
+        if attached + item.size > config.MAX_ATTACHED_BYTES:
+            limit = config.MAX_ATTACHED_BYTES // (1024 * 1024)
+            error = (
+                f"{item.name} would put this turn over the {limit} MB total for "
+                "attachments. Send what is attached first, or drop something."
+            )
+    if error:
+        # Remembered rather than clearing the whole widget: a bad file among three
+        # good ones used to reset the uploader and take the other two with it.
+        st.session_state.dropped_uploads[key] = (
+            st.session_state.dropped_uploads.get(key, 0) + 1
+        )
+        refusals[key] = error
+        continue
+    attachment.size = item.size
+    attachment.key = key
+    st.session_state.attachments.append(attachment)
+    held.add(key)
+
+st.session_state.upload_refusals = refusals
+for why in refusals.values():
+    st.warning(f"⚠️ {why}")
+
+
+def render_attachments() -> None:
+    """The chips for what is attached, pinned directly above the input box.
+
+    They used to render wherever the script happened to reach them — in the middle of
+    the page, under the starter cards, a long way from the box they belong to. They
+    are part of the composer, so they are pinned to it: app.js measures this row and
+    the page reserves room for it, exactly as it does for the controls underneath.
+    """
+    if not st.session_state.attachments:
+        return
+    with st.container(key="attachments"):
+        for index, item in enumerate(st.session_state.attachments):
+            if st.button(
+                # Filename and the ✕, and a truncation warning if there is one. The
+                # character and page counts that used to sit here were four chips of
+                # arithmetic on a four-file turn, none of it telling the reader
+                # anything they did not already know about a file they chose.
+                f"{item.icon} {item.filename}"
+                + (f" · {item.summary}" if item.summary else "")
+                + "  ✕",
+                key=f"drop-attachment-{index}",
+                help="Remove this attachment",
+            ):
+                dropped = st.session_state.attachments.pop(index)
+                if dropped.key:
+                    st.session_state.dropped_uploads[dropped.key] = (
+                        st.session_state.dropped_uploads.get(dropped.key, 0) + 1
+                    )
+                st.rerun()
+        if any(item.kind == "image" for item in st.session_state.attachments) and not (
+            config.sees_images(MODEL.id)
+        ):
+            # Said next to the picture, once, rather than discovered when the answer
+            # ignores it. The picker is right there.
+            st.caption(
+                f"{MODEL.label} cannot read images — pick a Pixtral or Claude model "
+                "to have this one looked at."
+            )
+
+# No `max_chars`. That argument is the only thing that puts Streamlit's "15/8000"
+# counter inside the box, and a running character count is noise in a box you type a
+# question into — it reads as a form field with a quota. The limit itself is still
+# enforced, below, where it costs nothing to look at.
+#
+# Enforced here rather than hidden with CSS on purpose: the counter's own test id is
+# Streamlit's, unversioned, and not visible from this repo, so a rule naming it would
+# be a guess that fails silently the day it changes. Not asking for the counter
+# cannot fail that way.
+prompt = st.chat_input(PROFILE.input_placeholder)
+
+# The token app.js watches to know the composer should be emptied. A marker element
+# rather than a callback, for the same reason `#processing-signal` is one: this file
+# cannot touch the textarea, and a value in the DOM is something app.js can compare
+# against what it last acted on, so a clear empties the box exactly once.
+st.markdown(
+    f'<div id="composer-reset" data-token="{st.session_state.clear_token}" hidden></div>',
+    unsafe_allow_html=True,
+)
+
+# Rendered here, before the turn below: that block ends in `st.rerun()`, so
+# anything after it is never reached while an answer is generating — which is
+# exactly when a user whose model just ran out of credit reaches for the picker.
+# The chips go with it: they are pinned to the composer too, and rendering them up
+# where the script first hears about the upload is what put them mid-page.
+render_attachments()
+render_controls()
+
+if prompt and prompt.strip():
+    asked = prompt.strip()
+    if len(asked) > config.MAX_PROMPT_CHARS:
+        # The cap the counter used to advertise. Said once, at the moment it matters,
+        # instead of counted out on screen for every question that was never near it.
+        over = len(asked) - config.MAX_PROMPT_CHARS
+        st.warning(
+            f"⚠️ That question is {over:,} characters over the "
+            f"{config.MAX_PROMPT_CHARS:,}-character limit. Shorten it, or attach the "
+            "long part as a file."
+        )
+        # And handed back, because `st.chat_input` empties its box on submit: without
+        # this, "shorten it" asks the reader to shorten something the app has just
+        # destroyed. The counter that used to enforce this made overrunning impossible
+        # in the first place, so losing the text is a regression this pays off.
+        with st.expander("Your question, to copy back out", expanded=True):
+            st.code(asked, language=None)
+    else:
+        start_new_turn(asked, st.session_state.attachments)
+
+
+# --- the turn --------------------------------------------------------------
+
+if st.session_state.processing:
+    # Marker element app.js polls to know a generation is in flight.
+    st.markdown('<div id="processing-signal" hidden></div>', unsafe_allow_html=True)
+
+    render_user(st.session_state.messages[-1])
+    status = st.empty()
+    show_status(status, "Thinking")
+
+    answer = st.empty()
+    question = st.session_state.messages[-1].get("text", "")
+    # Set only when Streamlit aborts this run from underneath us. The `finally` below
+    # must then leave `processing` alone and not issue a rerun of its own: the abort
+    # already is one, and clearing the flag on a turn that never finished left the
+    # question on screen with no answer, no error and nothing to click.
+    interrupted = False
+
+    def fail(message: str, detail: str) -> None:
+        """Surface a failure — and drop any notice, which can only contradict it.
+
+        A leftover "retrying with X…" sitting above "could not complete that
+        request" is how the UI ended up arguing with itself.
+        """
+        st.session_state.error = message
+        st.session_state.error_detail = detail
+        st.session_state.notice = ""
+
+    try:
+        messages = history.build(
+            st.session_state.messages,
+            SYSTEM_PROMPT,
+            vision=config.sees_images(MODEL.id),
+        )
+
+        # `run_conversation`, not `run_turn`: it walks every configured model
+        # itself, so a spent quota moves to the next one inside a single turn with
+        # nothing said about it. The old path failed over by rerunning and printing
+        # "X is unavailable, retrying with Y" — accurate, and an answer to a
+        # question no visitor asked.
+        answered: dict | None = None
+        for event in engine.run_conversation(
+            index=INDEX,
+            messages=messages,
+            models=[MODEL, *(option for option in MODELS if option.key != MODEL.key)],
+            provider_for=get_provider,
+            question=question,
+        ):
+            if event.kind == engine.STATUS:
+                show_status(status, event.text)
+            elif event.kind == engine.STREAM:
+                with answer.container(), st.chat_message("assistant"):
+                    st.write_stream(clearing(event.deltas, status))
+            elif event.kind == engine.RESET:
+                answer.empty()
+            elif event.kind == engine.ANSWER:
+                answered = event.data
+
+        status.empty()
+        # Re-render once with links resolved, so a raw `docs/...md` target never flashes.
+        answer.empty()
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "text": answered["text"] if answered else "",
+                "sources": answered["sources"] if answered else [],
+                "rating": None,
+                "model": MODEL.key,
+            }
+        )
+        # A failover happened or it did not; either way the reader gets an answer
+        # and no commentary. The switch is logged, not printed.
+        if answered and answered.get("switched_from"):
+            logger.info(
+                "Answered on a fallback model after %s was %s",
+                answered["switched_from"][0], answered["switched_from"][1],
+            )
+    except llm.AssistantError as exc:
+        status.empty()
+        answer.empty()
+        # Every configured model has now been tried. There is nothing left to fail
+        # over to and nothing useful to say about which one gave up first.
+        logger.error(
+            "Turn failed (%s): %r",
+            exc.kind,
+            exc.original,
+            exc_info=exc.original if exc.kind == "unknown" else None,
+        )
+        fail(exc.user_message, _detail(exc.original or exc))
+    except Exception as exc:  # last-resort guard so the UI never dies
+        if is_control_flow(exc):
+            # Streamlit's own control flow, not a failure. Re-raised so the rerun or
+            # stop it represents actually happens.
+            interrupted = True
+            raise
+        status.empty()
+        answer.empty()
+        logger.exception("Unexpected failure")
+        fail(llm.classify(exc).user_message, _detail(exc))
+    finally:
+        if not interrupted:
+            st.session_state.processing = False
+        # Not while interrupted: the abort in flight IS a rerun, and calling another
+        # one here replaced it — which left the question on screen with no answer, no
+        # error card and nothing to click, because `processing` had been cleared by a
+        # turn that never finished.
+        if not interrupted:
+            st.rerun()

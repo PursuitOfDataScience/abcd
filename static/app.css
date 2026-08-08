@@ -1,0 +1,1169 @@
+/* Sage — the site assistant.
+ *
+ * Light is the default and dark is the media-query override, matching Streamlit's
+ * own fallback. All colour lives in custom properties; app.js reads these rather
+ * than hardcoding hex, which is what used to leave example cards and the copy
+ * button styled for dark mode while the page rendered light.
+ */
+
+:root {
+    color-scheme: light dark;
+
+    --brand: #800000;
+    --brand-deep: #a5122a;
+    --gradient: linear-gradient(135deg, var(--brand), var(--brand-deep));
+    /* Used for gradient-clipped text, and as the fallback when background-clip
+     * is unsupported — so it must be readable on the page background. */
+    --gradient-text-start: #800000;
+    --gradient-text-end: #a5122a;
+    --brand-text: #800000;
+    /* Borders and focus rings. --brand itself is only for gradient *fills* (white
+     * text on maroon works in both themes); as a 1px line on a dark page it is
+     * 1.73:1, which is not a visible focus indicator. */
+    --brand-line: #800000;
+
+    --text-primary: #1f2937;
+    --text-secondary: #4b5563;
+    --text-muted: #6b7280;          /* 4.83:1 on white — do not add opacity */
+    --icon: #52525b;
+    --icon-hover: var(--brand-text);
+
+    --card-bg: linear-gradient(145deg, #ffffff 0%, #f8fafc 100%);
+    --card-bg-hover: linear-gradient(145deg, #fbeaec 0%, #f6d9dd 100%);
+    --card-border: #e2e8f0;
+    --card-border-hover: #c98a92;
+
+    --chip-bg: #f8fafc;
+    --chip-border: #e2e8f0;
+    --chip-fg: var(--text-secondary);
+
+    --control-bg: rgba(0, 0, 0, 0.04);
+    --control-bg-hover: rgba(0, 0, 0, 0.09);
+    --control-border: rgba(0, 0, 0, 0.12);
+
+    --input-border: #d1d5db;
+    /* The popover panel. Its own pair rather than reusing --card-bg, because the card
+     * background is a gradient and a floating panel wants one flat colour — and
+     * because this is the one surface Streamlit renders outside everything else this
+     * file reaches, so it must be stated, not inherited. */
+    --popover-bg: #ffffff;
+    --popover-border: #e2e8f0;
+    --code-inline-bg: rgba(128, 0, 0, 0.1);
+    --code-inline-fg: #8a1020;
+
+    /* Darker than the #15803d it was. Over its own 12%-green background on white
+     * that read 4.39:1 — under AA — which nothing here measured until the attachment
+     * chip was modelled, because the chip was the only thing using it as *text*. */
+    --ok: #0f6b30;
+    --ok-bg: rgba(22, 163, 74, 0.12);
+    --danger: #b91c1c;
+    --danger-bg: rgba(239, 68, 68, 0.1);
+    --danger-border: rgba(239, 68, 68, 0.25);
+
+    --shadow-sm: 0 2px 8px rgba(128, 0, 0, 0.25);
+    --shadow-md: 0 4px 15px rgba(0, 0, 0, 0.06);
+    --shadow-lg: 0 8px 25px rgba(128, 0, 0, 0.18);
+
+    --space-sm: 0.5rem;
+    --space-md: 1rem;
+    --space-lg: 1.5rem;
+
+    /* Streamlit's own header strip: full width, transparent, and on top of
+     * everything. Nothing clickable may sit inside it, and the content clears it
+     * by this much. */
+    --host-header: 3.75rem;
+
+    /* The fixed bottom bar (input + the strip of controls under it) and the
+     * strip on its own. app.js measures both and republishes them here, because
+     * neither is a constant: the controls are taller on a narrow window, and an
+     * attachment chip adds a row.
+     *
+     * These two are only the pre-measurement fallback, and they have to agree
+     * with each other: `--strip-h` is what the bar reserves below the input, so
+     * `--bar-h` must be at least that plus the input and the bar's own padding.
+     * A --bar-h of 9.5rem alongside a --strip-h of 4.5rem was under-counting the
+     * bar it described by 26px, and CI caught the newest answer 2px underneath
+     * the input on the one screen where the measurement had not landed yet.
+     * Generous on purpose: over-reserving is dead space app.js takes back on the
+     * first frame, under-reserving hides an answer. */
+    --strip-h: 4.5rem;
+    /* The bar alone, and what the page reserves. They differ by the attachment chips,
+     * which are pinned to the first and counted in the second — see `measureChrome`
+     * for why those cannot be one number.
+     *
+     * The two are tuned in opposite directions on purpose. `--bar-h` is a
+     * reservation, so generous is safe: extra is dead space app.js takes back on the
+     * first frame, missing hides an answer. `--bar-band` is a *position*, so generous
+     * is not safe — at 12rem against a measured 134px it floated the chips 58px above
+     * the box they belong to, which the `attached` screens caught the moment they
+     * existed.
+     *
+     * Derived from `--strip-h` rather than guessed, because the bar's band IS the
+     * strip it reserves plus the input and its padding. Two hand-tuned numbers agreed
+     * with each other by luck and were both ~20px under the real first-frame band;
+     * this way one of them changing cannot silently break the other. */
+    --bar-band: calc(var(--strip-h) + 5.25rem);
+    --bar-h: 12rem;
+    /* What is left between the last message and the bar. Also how far the page
+     * can scroll past its last message, so it is dead space, one gap's worth. */
+    --tail-gap: 1.75rem;
+
+    --content-max: min(820px, 92vw);
+    --input-max: min(780px, 88vw);
+    --user-bubble-max: 78%;
+    --radius-sm: 8px;
+    --radius-md: 14px;
+    --radius-lg: 24px;
+
+    --transition: 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        /* A maroon gradient on a near-black page reads at 1.73:1. These lighter
+         * tints keep the brand while staying legible. */
+        --gradient-text-start: #f2b0b6;
+        --gradient-text-end: #e08a94;
+        --brand-text: #f0a8ac;
+        --brand-line: #e08a94;
+
+        --text-primary: #e5e7eb;
+        --text-secondary: #b6bcc7;
+        --text-muted: #9ca3af;      /* 7.44:1 on #0e1117 */
+        --icon: #b6bcc7;
+
+        --card-bg: linear-gradient(145deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%);
+        --card-bg-hover: linear-gradient(145deg, rgba(128, 0, 0, 0.32) 0%, rgba(165, 18, 42, 0.32) 100%);
+        --card-border: rgba(255, 255, 255, 0.12);
+        --card-border-hover: rgba(196, 90, 100, 0.7);
+
+        --chip-bg: rgba(255, 255, 255, 0.06);
+        --chip-border: rgba(255, 255, 255, 0.14);
+
+        --control-bg: rgba(255, 255, 255, 0.08);
+        --control-bg-hover: rgba(255, 255, 255, 0.16);
+        --control-border: rgba(255, 255, 255, 0.18);
+
+        --input-border: #374151;
+        /* Streamlit painted this one white on a near-black page. Matched to the input
+         * box's own surface so the panel reads as part of the composer it belongs to. */
+        --popover-bg: #1c1d24;
+        --popover-border: rgba(255, 255, 255, 0.16);
+        --code-inline-bg: rgba(240, 168, 172, 0.14);
+        --code-inline-fg: #f0a8ac;
+
+        --ok: #4ade80;
+        --ok-bg: rgba(34, 197, 94, 0.16);
+        --danger: #fca5a5;
+        --danger-bg: rgba(239, 68, 68, 0.14);
+        --danger-border: rgba(239, 68, 68, 0.3);
+
+        --shadow-md: 0 4px 15px rgba(0, 0, 0, 0.35);
+    }
+}
+
+/* ===== BASE RESETS ===== */
+.stDeployButton, #MainMenu, footer { display: none !important; }
+[data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] { display: none !important; }
+[data-testid="manage-app-button"] { display: none !important; }
+
+/* The host's own furniture: "Built with Streamlit 🎈" and the "Fullscreen" button
+ * that appears on hover. `?embed=true` is supposed to drop the first and does not
+ * on Community Cloud, which re-adds its badge outside the app's own footer.
+ *
+ * Deliberately over-specified. This is the one place the stylesheet has to name
+ * things it cannot see from here — the app is embedded cross-origin, so the site
+ * cannot reach in and remove them, and Streamlit is not installable in the
+ * environment this is written in. A single `data-testid` would be a rule that
+ * stops working silently on the next release, so every plausible shape of each
+ * control is listed: the current test id, the hashed-class form (matched on the
+ * stable substring rather than the hash), and the one thing that cannot change
+ * without the badge ceasing to be a badge — that it links to Streamlit.
+ *
+ * The failure mode if a selector goes stale is visible rather than dangerous: the
+ * badge reappears and gets another line here. */
+[data-testid="stAppViewerBadge"],
+[data-testid="stStatusWidget"],
+[data-testid="stDecoration"],
+[class*="viewerBadge"],
+[class*="_viewerBadge"],
+[class*="_profileContainer"],
+a[href*="streamlit.io/cloud"],
+a[href*="share.streamlit.io"],
+a[href^="https://streamlit.io"],
+[data-testid="StyledFullScreenButton"],
+[data-testid="stFullScreenFrame"] > div > button,
+button[title="View fullscreen"],
+button[title="Exit fullscreen"] { display: none !important; }
+
+/* Top padding clears Streamlit's header strip, so nothing lands in the band it
+ * takes the clicks for. The previous stylesheet got this spacing by accident,
+ * from padding on an empty .chat-container marker div; setting it to 0 here
+ * sliced the first message in half at the viewport top. */
+.main .block-container,
+[data-testid="stMainBlockContainer"] {
+    /* `--fill` is how a conversation shorter than the window is sat just above
+     * the composer instead of being marooned at the top of it: app.js measures
+     * the space going spare and puts it here, above the first message. See the
+     * note below on why it is padding and not flex alignment. */
+    padding-top: calc(var(--host-header) + var(--fill, 0px)) !important;
+    /* Exactly the bar plus one gap. This padding is also how far the page can
+     * scroll past its last message, so every extra pixel of it is dead space
+     * under the newest answer — and every missing pixel hides that answer under
+     * the input instead (1.5rem, an older attempt, buried it by 131px). The
+     * hardcoded 10.25rem this replaces was a guess at a bar whose height changes
+     * with the viewport; app.js measures the real thing.
+     * tools/render_check.py bounds the resulting gap at both ends. */
+    padding-bottom: calc(var(--bar-h) + var(--tail-gap)) !important;
+    max-width: var(--content-max);
+}
+
+/* No `min-height: 100dvh` with `justify-content: center`/`flex-end` here, though
+ * it is the obvious way to sit a short conversation just above the composer and to
+ * centre the landing screen in what is left.
+ *
+ * It shipped, and on the landing screen in the real app the hero ended up above
+ * the top of the window. Both parts of that pairing depend on how Streamlit lays
+ * out the page around this block — whether `stMain` is a flex column, whether the
+ * pinned bar is inside its flow — and when the guess is wrong, the free space goes
+ * to the wrong end and flex alignment overflows out of a scrollport that cannot be
+ * scrolled back past its start. The failure mode is content a reader cannot reach,
+ * which is worse than the dead space it was buying back, and no replica of
+ * Streamlit's DOM can be trusted to reproduce it.
+ *
+ * What closes that space instead is `--fill`, which app.js measures and puts into
+ * the padding *above* the conversation. Padding at the top can only push content
+ * down, so the worst a wrong measurement can do is leave the gap it was closing —
+ * never move a message somewhere a reader cannot scroll back to. */
+
+[data-testid="stVerticalBlock"] > div { margin-bottom: 0 !important; padding-bottom: 0 !important; }
+[data-testid="stVerticalBlock"] { gap: 0 !important; }
+.stMarkdown { margin: 0 !important; padding: 0 !important; }
+.element-container { margin: 0 !important; padding: 0 !important; }
+
+html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
+    overflow-x: hidden !important;
+}
+
+/* ===== COMPOSER STRIP (clear + model picker) ===== */
+
+/* Pinned under the chat input, at the opposite end of the page from Streamlit's
+ * header. Both earlier homes for these controls were above the conversation and
+ * both failed:
+ *
+ * * `position: fixed; top: 8px` put the bar inside `[data-testid="stHeader"]` —
+ *   Streamlit's full-width strip across the top of every app. It is transparent,
+ *   so the bar was never hidden and every mock-up looked right; it is also at a
+ *   z-index no stylesheet can outrank, so it took every click aimed at the
+ *   controls underneath. The bar was on screen and completely dead.
+ * * In flow and sticky it was clickable, but the picker inside it did not render
+ *   on the landing screen — the one screen where a new user has to pick a model
+ *   before there is any conversation to pick one for.
+ *
+ * Down here the header cannot reach it, and it is part of the composer rather
+ * than of the conversation, so it is on screen on every screen. `fixed` rather
+ * than `sticky` because it must never scroll away from the input it belongs to;
+ * the bar above reserves exactly `--strip-h` of room for it, so the two cannot
+ * overlap however tall the row of controls gets. */
+.st-key-composer-strip {
+    position: fixed;
+    /* Lifted off the window edge with `bottom`, not with padding: this element is
+     * a direct child of the main vertical block, and the
+     * `[data-testid="stVerticalBlock"] > div` reset above it is the more specific
+     * selector, so an `!important` padding here computes to 0. app.js measures the
+     * band this occupies from the bottom of the window, so the offset is part of
+     * what the bar reserves and cannot become an overlap.
+     *
+     * A whole 1rem of it. At 0.4rem the row sat flush against the bottom edge of
+     * the window, which reads exactly like something being cut off. This is the
+     * clearance Streamlit's own bar had before any of this moved. */
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    /* Above Streamlit's own chrome, which is where `[data-testid="stHeader"]`
+     * lives at 999990 and where the pinned bottom bar plausibly lives too. A
+     * z-index that merely beats the page content is not enough: at 1000 the bar
+     * painted straight over these controls and the harness reported the picker
+     * unreachable at every width — the same failure as the old top bar, one end
+     * of the page down. Safe to outrank, because the strip only ever covers the
+     * band the bar reserves for it below the input. */
+    z-index: 999995;
+    width: var(--input-max) !important;
+    max-width: 100% !important;
+}
+
+/* One line: Clear, then the model name hard right — the corner every other assistant puts it in, and the corner the
+ * send button is already in, so the two controls that decide "what happens when I
+ * press this" line up.
+ *
+ * A row rather than `st.columns`, whose children have no intrinsic width — that is
+ * how the picker managed to be in the DOM and invisible on screen, twice.
+ *
+ * Both the keyed element and a vertical block inside it, because which of the two
+ * `st.container(key=…)` produces is a Streamlit implementation detail: the class
+ * can land on the vertical block itself or on a wrapper around one, and it has
+ * changed between versions. Styling only the descendant left the controls stacked
+ * in a column in the real app while every render in the harness had them in a row —
+ * the shape the replica happened to model was the shape that worked. `display:
+ * flex` is set here too, so the rule works on a wrapper that is a plain block
+ * rather than a flex container. */
+.st-key-composer-strip,
+.st-key-composer-strip > [data-testid="stVerticalBlock"] {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 0.4rem !important;
+}
+
+/* Every wrapper Streamlit puts between the row and a button, under either name it
+ * has used for them, so nothing in the chain stretches to the full width. */
+.st-key-composer-strip > [data-testid="stVerticalBlock"] > div,
+.st-key-composer-strip .element-container,
+.st-key-composer-strip [data-testid="stElementContainer"],
+.st-key-composer-strip [data-testid="stPopover"],
+.st-key-composer-strip .stPopover,
+.st-key-composer-strip .stButton {
+    width: auto !important;
+    flex: 0 0 auto !important;
+    min-width: 0 !important;
+}
+
+/* Model picker. A popover trigger, i.e. a button, so it would be sized by its own
+ * label — which is exactly the problem. Every model has a different-length name, so
+ * picking one resized this button, which reflowed the right-aligned row it sits in
+ * and moved the panel anchored to it. That is the jitter: not an animation, a layout
+ * that depended on the length of the current selection.
+ *
+ * A fixed width instead, wide enough for the longest name the picker offers and
+ * ellipsed past that, so switching models changes the text and nothing else. */
+.st-key-composer-strip [data-testid="stPopover"] button {
+    width: 15rem !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.st-key-composer-strip [data-testid="stPopover"] button p {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ===== THE POPOVER PANEL =====
+ *
+ * Rendered in a portal at the end of <body>, outside everything else this stylesheet
+ * reaches, and it came out white on a page that is otherwise dark — "very sharp and
+ * uncomfortable", which is what an unthemed panel looks like next to a themed one.
+ *
+ * `[data-baseweb="popover"]` is the handle rather than a Streamlit test id: Streamlit
+ * builds its popover on Base Web, the attribute is Base Web's own contract, and it is
+ * the one name here that does not belong to an unversioned internal. The test id is
+ * matched too, for the version that carries it, but the rule does not depend on it. */
+/* Colour on every wrapper, because any of them can be the one painting white; the
+ * border and shadow on the body ALONE. Applied to the wrapper too, they drew a ring
+ * inside a ring 2px apart with the shadow rendered twice, whenever Streamlit's portal
+ * was three divs deep instead of two — and how deep it is is not visible from here. */
+[data-baseweb="popover"] [data-testid="stPopoverBody"],
+[data-baseweb="popover"] > div > div,
+[data-testid="stPopoverBody"] {
+    background: var(--popover-bg) !important;
+    color: var(--text-primary) !important;
+}
+
+[data-testid="stPopoverBody"] {
+    border: 1px solid var(--popover-border) !important;
+    border-radius: var(--radius-md) !important;
+    box-shadow: var(--shadow-lg) !important;
+}
+
+/* A width of its own, for the same reason the trigger has one: the panel is a column
+ * of model names, and letting it size to the longest one meant it changed width — and
+ * so did its position, since it is anchored to a right-aligned trigger. */
+[data-testid="stPopoverBody"] {
+    width: 19rem !important;
+    max-width: min(19rem, 92vw) !important;
+}
+
+[data-baseweb="popover"] [data-testid="stCaptionContainer"],
+[data-testid="stPopoverBody"] [data-testid="stCaptionContainer"] {
+    color: var(--text-muted) !important;
+}
+
+/* The model buttons inside the panel are already styled, by `.st-key-model-list`
+ * further down. A copy of those rules lived here and was one class more specific, so
+ * its neutral hover border silently replaced the maroon one that was intended. Deleted
+ * rather than reconciled: one owner per control. */
+
+.st-key-composer-strip button {
+    background: var(--control-bg) !important;
+    border: 1px solid var(--control-border) !important;
+    border-radius: var(--radius-sm) !important;
+    color: var(--text-secondary) !important;
+    padding: 5px 9px !important;
+    min-height: 34px !important;
+    backdrop-filter: blur(8px);
+    transition: background var(--transition), border-color var(--transition);
+}
+
+.st-key-composer-strip button:hover {
+    background: var(--control-bg-hover) !important;
+    border-color: var(--brand-line) !important;
+    color: var(--brand-text) !important;
+}
+
+.st-key-composer-strip button p { font-size: 0.78rem !important; margin: 0 !important; }
+
+/* The model list lives inside a popover, and Streamlit renders popover panels in
+ * a portal at the end of <body> — outside .st-key-composer-strip, so none of the rules
+ * above reach it. Hence its own container key. */
+.st-key-model-list { max-height: 45vh; overflow-y: auto; }
+
+.st-key-model-list button {
+    justify-content: flex-start !important;
+    text-align: left !important;
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    padding: 4px 8px !important;
+    min-height: 30px !important;
+}
+
+.st-key-model-list button p { font-size: 0.82rem !important; margin: 0 !important; }
+
+.st-key-model-list button:hover {
+    background: var(--control-bg-hover) !important;
+    border-color: var(--brand-line) !important;
+}
+
+/* ===== WELCOME ===== */
+.welcome {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center;
+    padding: clamp(0.5rem, 2vw, 1rem) var(--space-md);
+    /* The container's padding-top now supplies the clearance. Keeping the old
+     * 11vh here as well overflowed short viewports. */
+    margin-top: clamp(0.25rem, 2vh, 1.25rem);
+    margin-bottom: var(--space-sm);
+    animation: fadeInDown 0.6s ease-out;
+}
+
+.welcome-title {
+    font-size: clamp(1.7rem, 4.4vw, 2.4rem) !important;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    /* `background-clip: text` clips to the text box, so a tight line-height cuts
+     * the descenders in "help"/"you". Streamlit's `.stMarkdown h1` rule is more
+     * specific than this class, hence !important. */
+    line-height: 1.35 !important;
+    padding: 0 0 0.12em !important;
+    overflow: visible !important;
+    color: var(--brand-text);
+    background: linear-gradient(135deg, var(--gradient-text-start), var(--gradient-text-end));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: var(--space-sm);
+    animation: fadeInUp 0.6s ease-out 0.15s both;
+}
+
+.welcome-subtitle {
+    /* !important because Streamlit sizes markdown paragraphs itself at one class
+     * and one type, and a bare `.welcome-subtitle` is one class — it loses, and the
+     * clamp below never applies. The caveat line under the input lost the same fight
+     * for the same reason, and wrapped onto a second line in the app while every
+     * render here passed. The title next to this has carried !important since it was
+     * written; this one never did. */
+    font-size: clamp(0.95rem, 2.1vw, 1.12rem) !important;
+    line-height: 1.55 !important;
+    color: var(--text-secondary);
+    /* Wide enough to keep the one-line subtitle on one line; it still wraps
+     * gracefully on narrow screens. */
+    max-width: min(40rem, 92vw);
+    text-wrap: pretty;
+    margin: 0 auto 0.6rem;
+    animation: fadeInUp 0.6s ease-out 0.25s both;
+}
+
+@keyframes fadeInDown {
+    from { opacity: 0; transform: translateY(-20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== EXAMPLE CARDS ===== */
+/* Wider than the 600px it was, and tied to the input box rather than to a number of
+ * its own. The six cards are the whole landing screen, and at 600px in a 1400px
+ * window they sat in the middle of it looking squeezed — while the box you type in,
+ * directly below, was half again as wide. Matching `--input-max` lines the two up:
+ * the cards and the composer are the same column, which is the alignment a reader
+ * reads as deliberate. */
+.st-key-examples {
+    /* `width` as well as `max-width`, and this is the load-bearing half. This is a
+     * flex item of the page's vertical block, and `margin: 0 auto` suppresses the
+     * cross-axis stretch that would otherwise give it the line — so without a width
+     * it collapses to fit-content. Measured: 585px instead of 780px, and every one of
+     * the six labels wrapping to two lines at every width. The raised max-width did
+     * nothing at all until this line existed. */
+    width: 100%;
+    max-width: var(--input-max);
+    margin: 0 auto;
+}
+
+.st-key-examples [data-testid="stHorizontalBlock"] {
+    gap: 0.7rem !important;
+    margin-bottom: 0.7rem !important;
+}
+
+/* Each card gets its own keyed container, so the stagger uses stable class hooks
+ * instead of :nth-child (which matched every card, since Streamlit gives each
+ * .stButton exactly one child) or JS text-matching on the question wording. */
+[class*="st-key-example-card-"] button {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+    width: 100% !important;
+    /* Single-line labels, so the card no longer needs to be tall enough for two —
+     * but taller and roomier than that minimum. At 56px in a 92vw grid the six of
+     * them read as squeezed into a corner of a very large window, which is what they
+     * were: the only thing on the landing screen and using a fifth of it. */
+    height: 72px !important;
+    min-height: 72px !important;
+    padding: 12px 20px !important;
+    background: var(--card-bg) !important;
+    border: 1px solid var(--card-border) !important;
+    border-radius: var(--radius-md) !important;
+    /* Ceiling raised, floor left where it was. The floor is what holds the tightest
+     * width — just above the 640px mobile breakpoint, where the grid is two columns
+     * and "Set up a Python environment" has about 233px to fit in. Raising the floor
+     * to 0.9rem wrapped it, in a band no render covered until 660px was added to the
+     * width list. `2vw` reaches the ceiling by ~1050px, so wide windows get the
+     * bigger type and narrow ones keep the line. */
+    font-size: clamp(0.84rem, 2vw, 1.05rem) !important;
+    font-weight: 500 !important;
+    line-height: 1.3 !important;
+    color: var(--text-primary) !important;
+    box-shadow: var(--shadow-md) !important;
+    transition: background var(--transition), border-color var(--transition),
+                transform var(--transition), box-shadow var(--transition);
+    animation: cardIn 0.45s ease-out both;
+}
+
+[class*="st-key-example-card-"] button p { margin: 0 !important; }
+
+.st-key-example-card-0 button { animation-delay: 0.18s; }
+.st-key-example-card-1 button { animation-delay: 0.26s; }
+.st-key-example-card-2 button { animation-delay: 0.34s; }
+.st-key-example-card-3 button { animation-delay: 0.42s; }
+.st-key-example-card-4 button { animation-delay: 0.5s; }
+.st-key-example-card-5 button { animation-delay: 0.58s; }
+
+@keyframes cardIn {
+    from { opacity: 0; transform: translateY(18px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+[class*="st-key-example-card-"] button:hover {
+    background: var(--card-bg-hover) !important;
+    border-color: var(--card-border-hover) !important;
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-lg) !important;
+}
+
+[class*="st-key-example-card-"] button:active { transform: translateY(-1px); }
+
+/* ===== CHAT INPUT ===== */
+.stChatInput {
+    max-width: var(--input-max) !important;
+    margin: 0 auto !important;
+    position: relative !important;
+    z-index: 100 !important;
+}
+
+[data-testid="stChatInput"] { margin-top: 0 !important; padding-top: 0 !important; }
+
+.stChatInput > div {
+    border-radius: var(--radius-lg) !important;
+    border: 2px solid var(--input-border) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1) !important;
+    min-height: 56px !important;
+    display: flex !important;
+    align-items: center !important;
+    padding-left: 50px !important;
+    position: relative !important;
+    z-index: 100 !important;
+    transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.stChatInput > div:focus-within {
+    border-color: var(--brand-line) !important;
+    box-shadow: 0 4px 20px rgba(128, 0, 0, 0.25) !important;
+}
+
+/* The lower bound must stay at 16px: anything smaller makes iOS Safari zoom the
+ * page every time the field is focused. */
+.stChatInput textarea,
+.stChatInput textarea::placeholder {
+    font-size: clamp(1rem, 2.5vw, 1.1rem) !important;
+    line-height: 1.5 !important;
+}
+
+.stChatInput textarea {
+    /* 10px on the left, not 24. The box already insets the textarea past the
+     * paperclip, so the textarea's own padding is added on top of that: at 24px the
+     * cursor sat 26px clear of the clip, which reads as two unrelated things that
+     * happen to share a box. 10px puts it 12px away — the same inset the clip itself
+     * has from the edge — so the row is one thing. Right side is 0 because the box
+     * reserves the send button's corner instead. */
+    padding: 16px 0 16px 10px !important;
+    min-height: 24px !important;
+    height: auto !important;
+    resize: none !important;
+    position: relative !important;
+    z-index: 101 !important;
+}
+
+.stChatInput textarea::placeholder { color: var(--text-muted) !important; }
+.stChatInput div[data-baseweb="textarea"] { padding: 0 !important; }
+.stChatInput div[data-baseweb="base-input"] {
+    min-height: 56px !important;
+    display: flex !important;
+    align-items: center !important;
+}
+
+/* The send button, out of the flow and parked in the corner.
+ *
+ * In the flow it is a flex item beside the text, and once the text grows past one
+ * line it ends up on a row of its own underneath — which is a band of nothing
+ * between the last line typed and the bottom of the box, reported as "an empty space
+ * between the bottom of the text and the bottom of the input text box. it's very
+ * weird". Taking it out of the flow means the box's height is the text's height and
+ * nothing else, however many lines get typed.
+ *
+ * `:not(#paperclip-btn)` because app.js injects the paperclip as a button inside this
+ * same container and it is already parked on the left; without the exception this
+ * rule would stack the two of them in the same corner. */
+.stChatInput button:not(#paperclip-btn) {
+    position: absolute !important;
+    right: 10px !important;
+    bottom: 10px !important;
+    z-index: 102 !important;
+}
+
+/* Room for it, so a long line of text does not run underneath. Matches the button's
+ * 36px plus its 10px inset and a little air. */
+.stChatInput > div { padding-right: 56px !important; }
+.stChatInput textarea { padding-right: 0 !important; }
+
+/* Paperclip injected by app.js — styled here so it follows the theme.
+ *
+ * Pinned to the bottom, like the send button across from it. Both used to be centred
+ * by the box's own `align-items: center`; pinning only the send button left them 67px
+ * apart once a paragraph was typed, one at the vertical middle and one at the floor.
+ * They are a pair — the same row of the same box. */
+#paperclip-btn {
+    position: absolute;
+    left: 12px;
+    bottom: 10px;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--icon);
+    cursor: pointer;
+    transition: background var(--transition), color var(--transition);
+}
+
+#paperclip-btn:hover { background: var(--code-inline-bg); color: var(--icon-hover); }
+
+/* ===== BOTTOM BAR + DISCLAIMER ===== */
+
+/* The bar paints the app background across this whole band, and the strip of
+ * controls is fixed inside the part of it reserved here. Reserving it on the bar
+ * — rather than giving the strip a background of its own — is what keeps the two
+ * looking like one bar without this stylesheet having to guess what colour
+ * Streamlit is painting the page. */
+[data-testid="stBottomBlockContainer"] {
+    padding-bottom: calc(var(--strip-h) + 0.35rem) !important;
+}
+
+/* ===== FILE UPLOADER (visually hidden, still reachable) ===== */
+[data-testid="stFileUploader"] {
+    position: absolute !important;
+    width: 1px !important; height: 1px !important;
+    padding: 0 !important; margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+/* ===== ATTACHMENT CHIPS ===== */
+/* Pinned directly above the input box, not left wherever the script reached them.
+ * In the flow they rendered under the starter cards — a chip for a file you are
+ * about to send, halfway up the page, a long way from the box you are about to send
+ * it from. Reported as "at a random spot in the middle of the ui".
+ *
+ * `--bar-band` is the input bar's own height measured from the bottom of the window,
+ * published by app.js. It deliberately does NOT include this row: the page's bottom
+ * reservation (`--bar-h`) is bar-band plus the height of these chips, so anchoring
+ * them to the band cannot feed back into the number that positions them. An earlier
+ * version of that loop, in a different rule, ran away by 42px a frame. */
+.st-key-attachments {
+    position: fixed !important;
+    bottom: calc(var(--bar-band) + 0.35rem) !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    width: var(--input-max) !important;
+    max-width: 100% !important;
+    /* Above Streamlit's own chrome, for the same reason the controls strip below the
+     * input is: the pinned bottom container paints over anything that merely beats
+     * the page content. */
+    z-index: 999995;
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 0.35rem !important;
+}
+
+/* Named for both container shapes, because `st.container(key=…)` puts the class on a
+ * wrapper in some Streamlit versions and on the vertical block itself in others — and
+ * a row rule that reaches only one of them stacks the chips into a column. That
+ * exact bug shipped once already, with the controls under the input. */
+.st-key-attachments > [data-testid="stVerticalBlock"] {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    gap: 0.35rem !important;
+    width: 100% !important;
+}
+
+.st-key-attachments .element-container,
+.st-key-attachments [data-testid="stElementContainer"],
+.st-key-attachments .stButton {
+    width: auto !important;
+    flex: 0 0 auto !important;
+    min-width: 0 !important;
+}
+
+/* The "this model cannot read images" line, which is the one thing in here that is
+ * not a chip. It needs the whole width so it sits under the chips rather than beside
+ * one — and the width has to go on the flex ITEM, which is the element container the
+ * rule above pins to `flex: 0 0 auto`. Set on the caption inside it instead, the item
+ * still sized to max-content and the row overflowed the window by 439px at 500px,
+ * with the text simply running off the right edge. */
+.st-key-attachments .element-container:has([data-testid="stCaptionContainer"]),
+.st-key-attachments
+    [data-testid="stElementContainer"]:has([data-testid="stCaptionContainer"]) {
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    min-width: 0 !important;
+}
+
+.st-key-attachments [data-testid="stCaptionContainer"] {
+    font-size: 0.7rem !important;
+}
+
+.st-key-attachments button {
+    width: auto !important;
+    min-width: 0 !important;
+    background: var(--ok-bg) !important;
+    border: 1px solid var(--ok) !important;
+    border-radius: 16px !important;
+    color: var(--ok) !important;
+    padding: 5px 13px !important;
+    font-size: 0.8rem !important;
+    min-height: 0 !important;
+}
+
+.st-key-attachments button:hover {
+    background: var(--danger-bg) !important;
+    border-color: var(--danger) !important;
+    color: var(--danger) !important;
+}
+
+/* ===== MESSAGES ===== */
+.user-message {
+    display: flex;
+    justify-content: flex-end;
+    /* Two different gaps, and the reason they are not the same number:
+     *
+     * The top margin separates this question from the previous answer, so it is
+     * the break between turns and the larger of the two.
+     * The bottom margin is the gap between a question and its own answer, which
+     * belong together — but at 19–25px measured they read as one block, with the
+     * answer looking like a continuation of the question rather than a reply to
+     * it. Both ends are bounded by tools/render_check.py. */
+    margin: clamp(2.5rem, 5vw, 3.5rem) 0 clamp(2.25rem, 3.4vw, 2.75rem) 0;
+    padding-right: clamp(0.25rem, 2vw, 1rem);
+}
+
+.user-bubble {
+    background: var(--gradient);
+    color: #ffffff;
+    padding: 12px 18px;
+    border-radius: 18px 18px 4px 18px;
+    font-size: clamp(0.88rem, 2vw, 0.95rem);
+    line-height: 1.5;
+    max-width: var(--user-bubble-max);
+    box-shadow: var(--shadow-sm);
+    overflow-wrap: break-word;
+}
+
+.attachment-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.22);
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 0.78rem;
+    margin-bottom: 8px;
+}
+
+/* Assistant turns live in a keyed container; the old wrapper <div> never actually
+ * wrapped anything because Streamlit closes each markdown block on its own.
+ *
+ * Small bottom margin on purpose: the gap to the next question is set by that
+ * question's top margin, and this one is also the gap under the *last* answer,
+ * where every pixel is space between the answer and the input box. */
+[class*="st-key-answer-"] { margin: 0 0 clamp(0.5rem, 1.2vw, 0.85rem) 0; }
+
+.stChatMessage {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    max-width: 100% !important;
+    width: auto !important;
+}
+
+.stChatMessage p { max-width: 100% !important; overflow-wrap: break-word !important; margin-top: 0 !important; }
+.stChatMessage > div { margin-top: 0 !important; }
+.stChatMessage > div:nth-child(2) { max-width: 100% !important; flex: 1 !important; }
+
+/* Hide the assistant avatar and collapse its gutter. */
+.stChatMessage [data-testid="chatAvatarIcon-assistant"] { display: none !important; }
+.stChatMessage > div:first-child {
+    width: 0 !important; min-width: 0 !important;
+    padding: 0 !important; margin: 0 !important;
+    overflow: hidden !important;
+}
+
+.stChatMessage h1 { font-size: 1.35rem !important; line-height: 1.35 !important; }
+.stChatMessage h2 { font-size: 1.18rem !important; }
+.stChatMessage h3 { font-size: 1.04rem !important; }
+
+.stChatMessage code:not(pre code) {
+    background: var(--code-inline-bg) !important;
+    color: var(--code-inline-fg) !important;
+    padding: 2px 6px !important;
+    border-radius: 4px !important;
+    font-size: 0.88em !important;
+}
+
+.stChatMessage table { font-size: 0.86rem; }
+
+/* Code blocks get the full content width — capping them at 700px put a scrollbar
+ * inside a narrow box for ordinary sbatch lines. */
+.stChatMessage div[data-testid="stCodeBlock"] {
+    position: relative !important;
+    width: 100% !important;
+    max-width: 100% !important;
+}
+
+.stChatMessage div[data-testid="stCodeBlock"] pre {
+    max-width: 100% !important;
+    overflow-x: auto !important;
+}
+
+/* Streamlit's own copy button is replaced by .sage-copy-btn (positioned reliably). */
+.stChatMessage div[data-testid="stCodeBlock"] > button,
+.stChatMessage div[data-testid="stCodeBlock"] > div > button { display: none !important; }
+
+.sage-copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 6px;
+    border-radius: 6px;
+    background: var(--control-bg);
+    border: 1px solid var(--control-border);
+    color: var(--icon);
+    cursor: pointer;
+    transition: background var(--transition), color var(--transition);
+}
+
+.sage-copy-btn:hover { background: var(--control-bg-hover); color: var(--text-primary); }
+.sage-copy-btn[data-copied="true"] { color: var(--ok); border-color: var(--ok); }
+
+/* ===== SOURCES ===== */
+.sources {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 0.55rem 0 0;
+}
+
+.sources-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-right: 2px;
+}
+
+.source-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 100%;
+    padding: 3px 10px;
+    border-radius: 12px;
+    background: var(--chip-bg);
+    border: 1px solid var(--chip-border);
+    color: var(--chip-fg) !important;
+    font-size: 0.74rem;
+    line-height: 1.5;
+    text-decoration: none !important;
+    transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+
+.source-chip:hover {
+    background: var(--card-bg-hover);
+    border-color: var(--card-border-hover);
+    color: var(--brand-text) !important;
+}
+
+.source-chip .source-kind { opacity: 0.65; font-size: 0.68rem; }
+
+/* ===== FEEDBACK ===== */
+[class*="st-key-rate-"] { margin-top: 0.3rem !important; }
+
+[class*="st-key-rate-"] [data-testid="stHorizontalBlock"] { gap: 0.25rem !important; }
+
+[class*="st-key-rate-"] button {
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    color: var(--text-muted) !important;
+    padding: 1px 7px !important;
+    min-height: 0 !important;
+    font-size: 0.82rem !important;
+    border-radius: var(--radius-sm) !important;
+}
+
+[class*="st-key-rate-"] button:hover {
+    background: var(--control-bg) !important;
+    border-color: var(--control-border) !important;
+    color: var(--text-primary) !important;
+}
+
+.rating-thanks { font-size: 0.74rem; color: var(--text-muted); padding: 2px 0; }
+
+/* ===== STATUS / STREAMING ===== */
+.status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0.25rem 0;
+    margin: 0.5rem 0 1rem;
+}
+
+.status-text {
+    color: var(--brand-text);
+    background: linear-gradient(90deg,
+        var(--gradient-text-start) 0%,
+        var(--gradient-text-end) 50%,
+        var(--gradient-text-start) 100%);
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: shimmer 1.6s ease-in-out infinite;
+    font-weight: 600;
+    font-size: clamp(0.85rem, 2vw, 0.94rem);
+}
+
+@keyframes shimmer {
+    0% { background-position: 100% 0; }
+    100% { background-position: -100% 0; }
+}
+
+.status-dot {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--gradient);
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { transform: scale(0.6); opacity: 0.45; }
+    50% { transform: scale(1.1); opacity: 1; }
+}
+
+.status-dots { display: inline-flex; gap: 4px; }
+.status-dots span {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--brand-text);
+    animation: bounceDot 1.4s ease-in-out infinite;
+}
+.status-dots span:nth-child(2) { animation-delay: 0.2s; }
+.status-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes bounceDot {
+    0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+    40% { transform: scale(1); opacity: 1; }
+}
+
+/* ===== NOTICE (e.g. provider failover) ===== */
+.notice {
+    background: var(--chip-bg);
+    border: 1px solid var(--chip-border);
+    border-left: 3px solid var(--brand-line);
+    border-radius: var(--radius-sm);
+    padding: 0.5rem 0.85rem;
+    margin: 0 0 var(--space-md);
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+}
+
+/* ===== ERRORS ===== */
+.error-card {
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-border);
+    border-radius: var(--radius-md);
+    padding: var(--space-md) var(--space-lg);
+    margin: var(--space-md) 0 var(--space-sm);
+    text-align: center;
+    color: var(--text-primary);
+}
+
+.error-card .error-title { font-weight: 600; color: var(--danger); margin-bottom: 4px; }
+.error-card .error-body { font-size: 0.9rem; color: var(--text-secondary); }
+
+/* "Try again" and "Use <other model>" sit side by side, and one of them carries
+ * a whole model name. Stretching them to a common height stops the pair looking
+ * ragged when only the longer label wraps. */
+.st-key-error-actions { margin-top: var(--space-sm); }
+.st-key-error-actions [data-testid="stHorizontalBlock"] { align-items: stretch; }
+.st-key-error-actions [data-testid="stColumn"] > div,
+.st-key-error-actions .element-container,
+.st-key-error-actions .stButton { height: 100%; }
+.st-key-error-actions button { height: 100%; min-height: 40px; }
+
+/* No landing note. It replaced the ℹ️ popover with three paragraphs of small print
+ * under the starter cards — the app's own terms and conditions as the second thing
+ * a new user reads. What survived is one line under the input; the sync stamp and
+ * the corpus summary live in docs_snapshot.json and the README, where the person
+ * who needs them is already looking. */
+
+/* ===== ANCHOR LINK CLEANUP ===== */
+.stMarkdown h1 a, .stMarkdown h2 a, .stMarkdown h3 a,
+.stMarkdown h4 a, .stMarkdown h5 a, .stMarkdown h6 a,
+.stMarkdown a.header-anchor, .stMarkdown a:empty { display: none !important; }
+
+/* ===== FOCUS ===== */
+#paperclip-btn:focus-visible,
+.sage-copy-btn:focus-visible,
+.source-chip:focus-visible,
+.stChatInput button:focus-visible,
+.stButton button:focus-visible {
+    outline: 2px solid var(--brand-line) !important;
+    outline-offset: 2px !important;
+}
+
+/* ===== SHORT VIEWPORTS =====
+ * Claw back vertical space so the welcome screen fits without scrolling on a
+ * laptop window that is not full height. Scrolling there is what pushes the
+ * title up under the browser and host chrome. */
+@media (max-height: 720px) {
+    .welcome { margin-top: 0 !important; padding-top: 0.25rem; }
+    .welcome-title { font-size: clamp(1.6rem, 3.9vw, 2.1rem) !important; }
+    .welcome-subtitle { margin-bottom: 0.35rem; }
+    [class*="st-key-example-card-"] button { height: 48px !important; min-height: 48px !important; }
+    .st-key-examples [data-testid="stHorizontalBlock"] { margin-bottom: 0.45rem !important; }
+    /* No padding-top override here. It used to restate `var(--host-header)` to
+     * document that the clearance for Streamlit's header is never what gets
+     * clawed back on a short window — and then `--fill` was added to that same
+     * declaration in the base rule, so this copy, later in the file and equally
+     * !important, silently dropped it again. The space above a short conversation
+     * stopped moving on every window under 720px, and `fill()` — measuring the
+     * slack as "what is left after the padding I applied", with padding that was
+     * being ignored — grew by 42px a frame. The rule it was documenting is still
+     * true: claw space back from the cards and the hero, never from the header. */
+}
+
+/* ===== MOBILE ===== */
+@media (max-width: 640px) {
+    .st-key-examples [data-testid="stHorizontalBlock"] {
+        flex-direction: column !important;
+        gap: 0.5rem !important;
+    }
+
+    [class*="st-key-example-card-"] button { width: 100% !important; height: 52px !important; min-height: 52px !important; }
+
+    .user-message { padding-right: 0 !important; }
+    .user-bubble { max-width: 88%; }
+    /* Room for three controls on one line at 360px, model name included. */
+    .st-key-composer-strip [data-testid="stPopover"] button { max-width: 9.5rem; }
+    /* The controls take more room at this width, so the strip and the bar above it
+     * are both taller. app.js measures both; these are the fallbacks it starts
+     * from, and they only have to hold for the first frame — but they still have
+     * to hold, and to agree with each other, so --bar-h covers this --strip-h
+     * plus the input and the bar's padding. */
+    :root { --strip-h: 6rem; --bar-h: 14rem; }
+    .welcome { margin-top: 4vh; }
+}
+
+/* ===== REDUCED MOTION =====
+ * Three of the animations above loop forever. Honour the OS preference. */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+    }
+
+    .status-text {
+        -webkit-text-fill-color: var(--brand-text);
+        background: none;
+        animation: none !important;
+    }
+
+    .status-dot, .status-dots span { animation: none !important; opacity: 1; transform: none; }
+}
+
+/* ===== PRINT ===== */
+@media print {
+    .st-key-composer-strip, .stChatInput, [data-testid="stBottomBlockContainer"],
+    .sage-copy-btn, [class*="st-key-rate-"] { display: none !important; }
+
+    /* Nothing is pinned on paper, so the reserved band is dead white space. */
+    .main .block-container, [data-testid="stMainBlockContainer"] {
+        padding-bottom: 0 !important;
+        min-height: 0 !important;
+        display: block !important;
+    }
+
+    .user-bubble { background: none !important; color: #000 !important; border: 1px solid #999; }
+    .stChatMessage, .source-chip { color: #000 !important; }
+}
