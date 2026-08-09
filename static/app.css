@@ -86,7 +86,11 @@
      * the input on the one screen where the measurement had not landed yet.
      * Generous on purpose: over-reserving is dead space app.js takes back on the
      * first frame, under-reserving hides an answer. */
-    --strip-h: 4.5rem;
+    /* 0. There is no controls strip any more — its last inhabitant was a 🗑️ — and
+     * this is what the bar reserves *below* the input for it. Left at 4.5rem it
+     * would hold the composer that far off the bottom of the panel over a band of
+     * nothing, which is exactly what it looked like. */
+    --strip-h: 0rem;
     /* The bar alone, and what the page reserves. They differ by the attachment chips,
      * which are pinned to the first and counted in the second — see `measureChrome`
      * for why those cannot be one number.
@@ -109,7 +113,9 @@
     --tail-gap: 1.75rem;
 
     --content-max: min(820px, 92vw);
-    --input-max: min(780px, 88vw);
+    /* Was min(780px, 88vw). 780px is a very wide box for one line of typing, and
+     * at panel widths 88vw left barely a finger of margin either side. */
+    --input-max: min(620px, 84vw);
     --user-bubble-max: 78%;
     --radius-sm: 8px;
     --radius-md: 14px;
@@ -595,7 +601,11 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
     min-height: 56px !important;
     display: flex !important;
     align-items: center !important;
-    padding-left: 50px !important;
+    /* 18px, not the 50px it was. That 50 was the paperclip's berth — the button
+     * app.js injected at the left end of the box — and the clip is gone, so the
+     * reservation was 32px of nothing between the border and the cursor. Measured
+     * in the real app at 380px: a 319px box holding a 193px textarea. */
+    padding-left: 18px !important;
     position: relative !important;
     z-index: 100 !important;
     transition: border-color var(--transition), box-shadow var(--transition);
@@ -615,13 +625,11 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
 }
 
 .stChatInput textarea {
-    /* 10px on the left, not 24. The box already insets the textarea past the
-     * paperclip, so the textarea's own padding is added on top of that: at 24px the
-     * cursor sat 26px clear of the clip, which reads as two unrelated things that
-     * happen to share a box. 10px puts it 12px away — the same inset the clip itself
-     * has from the edge — so the row is one thing. Right side is 0 because the box
-     * reserves the send button's corner instead. */
-    padding: 16px 0 16px 10px !important;
+    /* No left padding of its own. It used to have 10px on top of the box's inset
+     * past the paperclip; with the clip gone the box's own 18px is the whole
+     * indent, and stacking another 10 on it put the cursor 28px in. Right side is
+     * 0 because the box reserves the send button's corner instead. */
+    padding: 16px 0 16px 0 !important;
     min-height: 24px !important;
     height: auto !important;
     resize: none !important;
@@ -1130,7 +1138,7 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
      * from, and they only have to hold for the first frame — but they still have
      * to hold, and to agree with each other, so --bar-h covers this --strip-h
      * plus the input and the bar's padding. */
-    :root { --strip-h: 6rem; --bar-h: 14rem; }
+    :root { --strip-h: 0rem; --bar-h: 9.5rem; }
     .welcome { margin-top: 4vh; }
 }
 

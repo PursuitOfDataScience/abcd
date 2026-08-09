@@ -162,12 +162,16 @@ PROFILE = Profile(
     searching_noun="the articles",
     page_title="Ask about Y. Yu's writing",
     page_icon="💬",
-    welcome_title="Ask about anything I've written",
-    # Kept short enough to sit on one line down to 500px: tools/render_check.py
-    # measures it, and the first draft wrapped from 966px down.
-    welcome_subtitle="Answers drawn from the articles on this site, with citations.",
+    # No welcome heading and no subtitle. Between the two of them and the
+    # composer's placeholder, the empty panel said the same thing three times
+    # before a reader had done anything.
+    welcome_title="",
+    welcome_subtitle="",
     index_spinner="Indexing the articles…",
-    input_placeholder="Ask anything about this site…",
+    # Short, and deliberately not a third phrasing of the heading that used to sit
+    # above it. The nav button that opens the panel and the panel's own title bar
+    # both already say what this is about.
+    input_placeholder="Ask a question…",
     # No starter cards, and no field for them: six buttons of someone else's
     # questions on the first thing a reader sees, and the one that was measurably
     # wrong — a ggplot2 question that retrieved the biography page — is the

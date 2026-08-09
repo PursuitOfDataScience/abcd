@@ -211,9 +211,9 @@ def query_param(name: str) -> str:
 # brief it produces is what makes "how does it compare?" answerable.
 CONTEXT_URL = query_param("ctx_url")
 SYSTEM_PROMPT, CONTEXT_DOC = context.apply(SYSTEM_PROMPT, CORPUS, CONTEXT_URL)
-if CONTEXT_DOC is not None:
-    WELCOME_TITLE = "Ask about this article"
-    WELCOME_SUBTITLE = CONTEXT_DOC.title
+# No welcome heading when the reader arrived from an article either. The panel's
+# own title bar on the website already reads "Asking about this article", so it was
+# the same statement twice, eighty pixels apart.
 if CONTEXT_URL and CONTEXT_DOC is None:
     # Worth a line in the log: it means the site and this corpus disagree about a
     # URL, which is what happens when a post is published and the corpus has not
@@ -236,9 +236,6 @@ for key, default in (
     # Why a file was refused, keyed the same way, so the reason survives a rerun.
     ("upload_refusals", {}),
     ("uploader_key", 0),
-    # Bumped by the Clear button. Rendered into the page for app.js, which is the only
-    # side that can reach the text inside Streamlit's chat input.
-    ("clear_token", 0),
     # Whether the `?q=` the page was opened with has been sent. See ask_from_url.
     ("asked_from_url", False),
     # Questions asked this session, against SESSION_LIMIT.
@@ -518,64 +515,31 @@ has_messages = bool(st.session_state.messages)
 # quotas move. `engine.run_conversation` walks the configured models itself.
 
 
-def render_controls() -> None:
-    """One line under the input: Clear and the model picker, in the right corner.
-
-    This row used to be a bar above the conversation, which was wrong twice over.
-    It sat in the band Streamlit's own full-width header takes the clicks for, so
-    it looked right and did nothing; and on the landing screen — the one screen
-    where a new user has to choose a model before asking anything — the picker
-    inside it did not render at all. Under the input it is beside the thing it
-    affects, on every screen, at the opposite end of the page from that header.
-
-    Clear, then the picker in the corner — it names what will answer, next to the
-    button that sends. Nothing else: every extra row here is a slice of a phone
-    screen spent on furniture, which is how the bottom of this app came to look, in
-    the words of the person using it, nasty.
-
-    One container, not a strip wrapping a row. Two of them meant two sets of layout
-    rules for two elements whose identity depends on which one `st.container(key=…)`
-    hangs the key off — and the inner rule outranked the outer one, which is how the
-    controls ended up stacked in a column in the app while every render in the
-    harness had them in a row.
-
-    No `st.columns`: a column has no intrinsic width, which is how the picker came
-    to be invisible twice. The row is laid out by CSS instead, so each control is
-    as wide as its own label and the worst a broken stylesheet can do is stack them.
-    """
-    with st.container(key="composer-strip"):
-        if has_messages and st.button(
-            "🗑️", key="clear", help="Clear this conversation"
-        ):
-            st.session_state.messages = []
-            st.session_state.processing = False
-            st.session_state.attachments = []
-            st.session_state.dropped_uploads = {}
-            st.session_state.upload_refusals = {}
-            st.session_state.error = None
-            st.session_state.notice = ""
-            st.session_state.uploader_key += 1
-            # Nothing here can empty the composer — the text in it is client-side
-            # state Streamlit only reads on submit — so clearing the conversation left
-            # the last question sitting in the box on the landing screen, over a set of
-            # starter cards, as if it were still about to be sent. app.js empties it
-            # when this counter moves.
-            st.session_state.clear_token += 1
-            st.rerun()
+# `render_controls()` and the `composer-strip` container it drew stood here. The
+# strip's last inhabitant was a 🗑️ that cleared the conversation, and the strip is
+# the reason the composer floated: the bar reserves `--strip-h` of room beneath the
+# input for it, so an empty strip is a band of nothing holding the box off the
+# bottom of the panel. Both are gone, and `--strip-h` is 0.
 
 
 # --- body ------------------------------------------------------------------
 
 if not has_messages:
-    st.markdown(
-        f"""
-        <div class="welcome">
-            <h1 class="welcome-title">{escape(WELCOME_TITLE)}</h1>
-            <p class="welcome-subtitle">{escape(WELCOME_SUBTITLE)}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    # Only if there is something to say. An empty heading still renders an <h1> with
+    # its own margins, so a blank profile would leave a band of nothing above the
+    # composer rather than an empty panel.
+    if WELCOME_TITLE or WELCOME_SUBTITLE:
+        title = (
+            f'<h1 class="welcome-title">{escape(WELCOME_TITLE)}</h1>'
+            if WELCOME_TITLE else ""
+        )
+        subtitle = (
+            f'<p class="welcome-subtitle">{escape(WELCOME_SUBTITLE)}</p>'
+            if WELCOME_SUBTITLE else ""
+        )
+        st.markdown(
+            f'<div class="welcome">{title}{subtitle}</div>', unsafe_allow_html=True
+        )
 
 else:
     # Marker only: app.js keys page-scroll behaviour off its presence — without it
@@ -783,22 +747,12 @@ def render_attachments() -> None:
 # cannot fail that way.
 prompt = st.chat_input(PROFILE.input_placeholder)
 
-# The token app.js watches to know the composer should be emptied. A marker element
-# rather than a callback, for the same reason `#processing-signal` is one: this file
-# cannot touch the textarea, and a value in the DOM is something app.js can compare
-# against what it last acted on, so a clear empties the box exactly once.
-st.markdown(
-    f'<div id="composer-reset" data-token="{st.session_state.clear_token}" hidden></div>',
-    unsafe_allow_html=True,
-)
-
 # Rendered here, before the turn below: that block ends in `st.rerun()`, so
 # anything after it is never reached while an answer is generating — which is
 # exactly when a user whose model just ran out of credit reaches for the picker.
 # The chips go with it: they are pinned to the composer too, and rendering them up
 # where the script first hears about the upload is what put them mid-page.
 render_attachments()
-render_controls()
 
 if prompt and prompt.strip():
     asked = prompt.strip()

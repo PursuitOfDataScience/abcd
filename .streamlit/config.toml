@@ -2,7 +2,12 @@
 # static/app.css keys off `prefers-color-scheme`, and pinning a base here would
 # desync the app's palette from Streamlit's own chrome.
 [theme]
-primaryColor = "#800000"
+# The site's own link colour (`--link-color` in the website's custom.css), matching
+# the palette `sage/profiles/site.py` layers over app.css. It was #800000 — the
+# maroon of the deployment this was forked from — which Streamlit paints onto the
+# one control the stylesheet does not reach: the send button. A maroon arrow in a
+# blue box, in the corner of a blue site.
+primaryColor = "#2563eb"
 font = "sans serif"
 
 [server]

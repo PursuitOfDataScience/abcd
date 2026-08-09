@@ -177,7 +177,10 @@
         // Strip first: the bar reserves room for it, so publishing it is what
         // gives the bar its final height. Reading the bar's rect afterwards
         // flushes that change, so both values come from the same layout.
-        if (strip) publish('--strip-h', band(strip));
+        // Published either way. There is no strip in this app any more, and a
+        // conditional left `--strip-h` at whatever the stylesheet last said —
+        // reserving a band under the input for an element that is not there.
+        publish('--strip-h', strip ? band(strip) : 0);
         if (bar) {
             // Two numbers, and the difference between them matters.
             //
@@ -282,15 +285,18 @@
             publish('--fill', 0);
             return;
         }
+        // Always 0 now, and the measuring below it is gone.
+        //
+        // The idea was that a conversation shorter than the window should sit just
+        // above the composer rather than be marooned at the top, so the slack was
+        // measured and spent as padding above the first message. In a wide window
+        // that reads as a chat resting on its input. In the docked panel — tall,
+        // 380px wide, and the shape this app is actually used in — it is a screen
+        // of blank space above the first thing anyone said, which is what it was
+        // reported as.
+        //
+        // Messages start at the top. That is where a transcript starts.
         publish('--fill', 0);
-        // Reads below force the reflow that makes that zero real.
-        if (port.scrollHeight > port.clientHeight + 1) {
-            return;   // long enough to scroll on its own; there is no slack
-        }
-        var end = tail();
-        if (end === null) return;
-        var slack = composerTop(bar) - end - TAIL_GAP;
-        publish('--fill', Math.max(0, Math.min(Math.round(slack), port.clientHeight)));
     }
 
     // Close the dead space the pin leaves behind once an answer has landed.
@@ -423,9 +429,60 @@
 
     /* --- injected controls ---------------------------------------------- */
 
+    /* --- the composer takes the keyboard ---------------------------------- */
+
+    // Opening the panel and then having to click the box before typing is a step
+    // that exists for no reason: there is one input, and everything a reader does
+    // here starts by typing into it.
+    //
+    // Two parts, because focusing on load is not enough on its own — Streamlit
+    // replaces the textarea on every rerun, so focus is lost after each answer.
+    function composer() {
+        return doc.querySelector('[data-testid="stChatInput"] textarea');
+    }
+
+    function focusComposer() {
+        var box = composer();
+        if (!box || doc.activeElement === box) return;
+        // Not while the reader is doing something else with the keyboard, and not
+        // while they are selecting text to copy out of an answer.
+        var active = doc.activeElement;
+        if (active && active !== doc.body && active.tagName !== 'IFRAME') return;
+        var selection = view.getSelection && view.getSelection();
+        if (selection && !selection.isCollapsed) return;
+        try { box.focus({ preventScroll: true }); } catch (e) { box.focus(); }
+    }
+
+    function addTypeToFocus() {
+        if (doc.body.dataset.sageTypeHook) return;
+        doc.body.dataset.sageTypeHook = 'true';
+        doc.addEventListener('keydown', function (event) {
+            // Printable characters only. Modifiers are shortcuts (⌘C on a selected
+            // answer, ⌘R, tab-navigation), and stealing those would break copying
+            // the thing this app exists to produce.
+            if (event.metaKey || event.ctrlKey || event.altKey) return;
+            if (event.key && event.key.length !== 1) return;
+            var active = doc.activeElement;
+            if (active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) {
+                return;
+            }
+            var box = composer();
+            if (!box) return;
+            // Focus only — the keystroke is not replayed, because the browser
+            // delivers it to the newly focused element itself once focus moves
+            // during keydown, and replaying it by hand typed everything twice.
+            try { box.focus({ preventScroll: true }); } catch (e) { box.focus(); }
+        });
+    }
+
     function addPaperclip() {
         var input = doc.querySelector('[data-testid="stChatInput"]');
         if (!input || doc.getElementById('paperclip-btn')) return;
+        // Only if there is something behind it. The button proxies its click to the
+        // uploader's hidden <input type="file">, and app.py does not render that
+        // widget unless SAGE_UPLOADS is set — so on the public deployment this drew
+        // a paperclip that opened nothing at all.
+        if (!doc.querySelector('[data-testid="stFileUploader"]')) return;
 
         var btn = doc.createElement('button');
         btn.id = 'paperclip-btn';
@@ -664,33 +721,11 @@
     // Clearing wipes the transcript from Python, but the text in Streamlit's chat input
     // is client-side state that Python only ever reads on submit — so the last question
     // stayed in the box, sitting over the starter cards on a freshly emptied landing
-    // screen as though it were still about to be sent.
-    //
-    // Driven by a token app.py renders rather than by "the conversation looks empty":
-    // the token says a clear HAPPENED, which is different from the transcript being
-    // empty, and only the first tells us the box should be emptied. Compared against
-    // the last token acted on, so a reader who starts typing straight after clearing
-    // does not have it taken away again on the next mutation frame.
-    function resetComposerOnClear() {
-        var marker = doc.getElementById('composer-reset');
-        if (!marker) return;
-        var token = marker.getAttribute('data-token') || '';
-        if (view.__sageClearToken === undefined) {
-            // First sight of the page: adopt the token without clearing, or a reload
-            // would wipe a question the reader had already typed.
-            view.__sageClearToken = token;
-            return;
-        }
-        if (view.__sageClearToken === token) return;
-        view.__sageClearToken = token;
-        var box = doc.querySelector('.stChatInput textarea');
-        if (box && box.value) {
-            setFieldValue(box, '');
-            box.style.height = 'auto';
-        }
-        view.__sageHistoryAt = -1;
-        view.__sageHistoryDraft = '';
-    }
+
+    // `resetComposerOnClear()` lived here, watching a token app.py bumped when the
+    // Clear button was pressed. There is no Clear button — the trash can was the
+    // last thing in the controls strip and went with it — so the token never moved
+    // and this never fired.
 
     // Close the model picker once a model has been picked.
     //
@@ -898,9 +933,10 @@
         // against that reservation, and autoScroll measures the gap they leave.
         measureChrome();
         addPaperclip();
+        focusComposer();
+        addTypeToFocus();
         addPasteHandler();
         addPromptHistory();
-        resetComposerOnClear();
         closePickerOnPick();
         addCodeCopyButtons();
         addAnswerCopyButtons();
