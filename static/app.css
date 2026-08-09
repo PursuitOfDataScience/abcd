@@ -71,7 +71,9 @@
     /* Streamlit's own header strip: full width, transparent, and on top of
      * everything. Nothing clickable may sit inside it, and the content clears it
      * by this much. */
-    --host-header: 3.75rem;
+    /* Was 3.75rem — the height of Streamlit's header strip, which is hidden above.
+     * What is left is ordinary breathing room at the top of the transcript. */
+    --host-header: 0.75rem;
 
     /* The fixed bottom bar (input + the strip of controls under it) and the
      * strip on its own. app.js measures both and republishes them here, because
@@ -112,10 +114,20 @@
      * can scroll past its last message, so it is dead space, one gap's worth. */
     --tail-gap: 1.75rem;
 
-    --content-max: min(820px, 92vw);
-    /* Was min(780px, 88vw). 780px is a very wide box for one line of typing, and
-     * at panel widths 88vw left barely a finger of margin either side. */
-    --input-max: min(620px, 84vw);
+    /* The app is one thing now: a 380px column docked beside an article. It is not
+     * a page anyone reads standalone, so there is no wide window to centre a
+     * comfortable measure in — every percent held back is a percent of a narrow
+     * panel spent on margin. 100% less one gutter each side, and the 820px ceiling
+     * stays for the rare wide window. */
+    --content-max: min(820px, 100%);
+    /* The block container's own padding, overridden below. Streamlit ships 16px a
+     * side and the old `92vw` cap took another 15 on top: 62px of a 380px panel
+     * spent on margin, which is why the conversation looked inset from a column
+     * that is already narrow. */
+    --gutter: 0.75rem;
+    /* Matched to the content it sits under, so the box and the text above it share
+     * an edge rather than being two widths in one column. */
+    --input-max: min(620px, 100%);
     --user-bubble-max: 78%;
     --radius-sm: 8px;
     --radius-md: 14px;
@@ -173,6 +185,14 @@
 [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] { display: none !important; }
 [data-testid="manage-app-button"] { display: none !important; }
 
+/* Streamlit's own header strip. Embedded it renders empty but still 60px tall, on
+ * top of the page and taking the clicks in that band — and `--host-header` reserved
+ * the same 60px below it so nothing landed underneath. Sixty pixels of nothing above
+ * the first message, in a panel 380px wide. Hidden outright rather than merely
+ * un-reserved: a transparent bar that still swallows clicks is worse than a visible
+ * one, and there is nothing in it to reach. */
+header[data-testid="stHeader"] { display: none !important; }
+
 /* The host's own furniture: "Built with Streamlit 🎈" and the "Fullscreen" button
  * that appears on hover. `?embed=true` is supposed to drop the first and does not
  * on Community Cloud, which re-adds its badge outside the app's own footer.
@@ -213,6 +233,8 @@ button[title="Exit fullscreen"] { display: none !important; }
      * the space going spare and puts it here, above the first message. See the
      * note below on why it is padding and not flex alignment. */
     padding-top: calc(var(--host-header) + var(--fill, 0px)) !important;
+    padding-left: var(--gutter) !important;
+    padding-right: var(--gutter) !important;
     /* Exactly the bar plus one gap. This padding is also how far the page can
      * scroll past its last message, so every extra pixel of it is dead space
      * under the newest answer — and every missing pixel hides that answer under
