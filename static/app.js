@@ -1046,9 +1046,146 @@
         if (input) input.focus();
     });
 
+    /* --- questions from the page around the frame ------------------------- */
+
+    // The website's "Ask about this" bubble hands a selected passage to the app.
+    //
+    // The first one travels in the frame's URL as `?q=`, which app.py asks once. A
+    // URL cannot carry a second, and rebuilding the frame to give it one would throw
+    // the conversation away — so every question after the first is posted here and
+    // typed into the composer instead. Until this existed the site had no way to
+    // deliver one, and selecting a passage with the panel already open did nothing
+    // at all.
+    //
+    // `view.parent` is the website: this script runs in a components.html iframe
+    // inside the Streamlit page, which is itself inside the site's frame. Only the
+    // middle one is same-origin, so the site's message arrives on `view` and the
+    // reply goes up to `view.parent` by postMessage like any cross-origin pair.
+
+    // Well past the longest thing the bubble will send (it caps a passage at 280) and
+    // short enough that a hostile framer cannot paste a book into the composer.
+    var ASK_LIMIT = 2000;
+    // Attempts, one per pass of sync(). Generous because the reason to wait is a turn
+    // that is still generating, during which the composer is deliberately dead. Past
+    // it the site is told, and rebuilds the frame around the question rather than
+    // leaving the click unanswered.
+    var ASK_TRIES = 60;
+
+    function reply(id, type, ok) {
+        try {
+            if (view.parent && view.parent !== view) {
+                view.parent.postMessage(
+                    { source: 'sage-app', type: type, id: id, ok: !!ok }, '*'
+                );
+            }
+        } catch (err) { /* nothing above us, or it refused the message */ }
+    }
+
+    function composer() {
+        return doc.querySelector('textarea[data-testid="stChatInputTextArea"]')
+            || doc.querySelector('[data-testid="stChatInput"] textarea');
+    }
+
+    function sendButton() {
+        var container = doc.querySelector('[data-testid="stChatInput"]');
+        // Not the paperclip, which is injected into the same container.
+        return container && container.querySelector('button:not(#paperclip-btn)');
+    }
+
+    // Delivery is a state machine on `view`, stepped by sync(), rather than a
+    // setTimeout chain — because the chain does not survive its own success. Sending
+    // makes Streamlit rerun, a rerun re-renders this components iframe, and every
+    // timer and closure in it dies with the old document. A retry loop written the
+    // obvious way is therefore killed by exactly the thing it is waiting for. sync()
+    // is re-entered after each re-render, and the pending question is held on `view`,
+    // which is the page around this frame and outlives all of it.
+    function drainAsk() {
+        var pending = view.__sagePending;
+        if (!pending) return;
+
+        if (pending.sent) {
+            // Streamlit empties the composer on submit, so this is the difference
+            // between "clicked" and "sent" — and reporting the click as success is
+            // how a control that does nothing gets reported as working.
+            var placed = composer();
+            if (!placed || placed.value !== pending.text) {
+                view.__sagePending = null;
+                reply(pending.id, 'sage:asked', true);
+                return;
+            }
+            pending.sent = false;   // the click did not take; fall through and retry
+        }
+
+        pending.tries -= 1;
+        if (pending.tries < 0) {
+            view.__sagePending = null;
+            reply(pending.id, 'sage:asked', false);
+            return;
+        }
+
+        var box = composer();
+        var send = sendButton();
+        // Never mid-answer: `blockSendWhileProcessing` makes the button unclickable
+        // then on purpose, and a question placed now would sit in the box and be sent
+        // by whatever the reader typed next.
+        if (!box || !send || isProcessing()) return;
+
+        setFieldValue(box, pending.text);
+        pending.sent = true;
+        // One frame for React to see the input event, or the button is still disabled
+        // from an empty box at the moment it is clicked.
+        view.requestAnimationFrame(function () {
+            try { send.click(); } catch (err) { /* replaced mid-rerun */ }
+            schedule();
+        });
+    }
+
+    // Re-registered on every pass, the way `addPromptHistory` is: this closure is
+    // torn down whenever Streamlit re-renders the component iframe, and a listener
+    // left on the parent window would be pointing into a document that no longer
+    // exists. The handle lives on `view` because that is the object that survives.
+    function acceptQuestions() {
+        if (view.__sageAskOff) {
+            try { view.__sageAskOff(); } catch (err) { /* window gone */ }
+        }
+        var onMessage = function (event) {
+            var data = event.data;
+            if (!data || data.source !== 'sage-site' || data.type !== 'sage:ask') return;
+            var text = typeof data.text === 'string' ? data.text.slice(0, ASK_LIMIT).trim() : '';
+            if (!text) return;
+            // A second question while one is still being placed replaces it. Two
+            // passages queued behind a generating answer would arrive as two
+            // questions the reader no longer remembers asking.
+            var stale = view.__sagePending;
+            if (stale && stale.id !== data.id) reply(stale.id, 'sage:asked', false);
+            view.__sagePending = { text: text, id: data.id, tries: ASK_TRIES, sent: false };
+            // Receipt first and immediately. It is the only thing the site puts a
+            // deadline on; everything after it may take as long as it takes.
+            reply(data.id, 'sage:ack', true);
+            schedule();
+        };
+        view.addEventListener('message', onMessage);
+        view.__sageAskOff = function () {
+            view.removeEventListener('message', onMessage);
+        };
+    }
+
     /* --- scheduling ------------------------------------------------------ */
 
     function sync() {
+        // Ahead of everything, and each half in a guard of its own — the two
+        // exceptions to the ordering argued below.
+        //
+        // safeSync wraps this whole function in one try/catch, so a throw in any step
+        // silently skips every step after it. Anywhere further down, an unrelated
+        // failure in a measurement or an injector would take the site's only route
+        // for delivering a question with it, and the symptom would be the one being
+        // fixed here: the selection bubble does nothing. Guarded separately so
+        // neither half can be skipped by the other, and so neither can cost the pass
+        // its layout.
+        try { acceptQuestions(); } catch (err) { /* keep the pass going */ }
+        try { drainAsk(); } catch (err) { /* keep the pass going */ }
+
         // Measurement FIRST. It used to run after the injectors, all of them inside
         // one try/catch, so a single throw anywhere above cost the whole pass its
         // layout: `--bar-h` went unpublished and the frame rendered on the
@@ -1118,7 +1255,15 @@
     safeSync();
     new MutationObserver(schedule).observe(doc.body, { childList: true, subtree: true });
     // Streaming appends text nodes that sometimes do not trigger the observer.
-    setInterval(function () { if (isProcessing()) schedule(); }, 250);
+    //
+    // Also the clock for a question posted by the site. `drainAsk` is stepped by
+    // sync(), and sync() is driven by mutations — but a question that arrives while
+    // the composer is missing is waiting on a page that is, by definition, not
+    // changing. Without this the retry never comes round and the question is lost
+    // silently, which is the failure this whole path exists to remove.
+    setInterval(function () {
+        if (isProcessing() || view.__sagePending) schedule();
+    }, 250);
 
     // A resize changes what the page has to reserve for the input bar — the
     // disclaimer under it rewraps — and mutates nothing, so the observer above
