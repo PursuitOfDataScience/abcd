@@ -91,6 +91,17 @@ SESSION_LIMIT = max(0, int(setting("SAGE_SESSION_LIMIT", "40") or 0))
 WELCOME_TITLE = PROFILE.welcome_title
 WELCOME_SUBTITLE = PROFILE.welcome_subtitle
 
+# The commit this tree was exported from, rendered where a reader never sees it and
+# anyone debugging can. `tools/export_app.py` writes BUILD; it is absent when the app
+# is run from a checkout rather than an export, which is itself the answer.
+def _build() -> str:
+    try:
+        with open(os.path.join(os.path.dirname(__file__), "BUILD"), encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return "source"
+
+
 st.set_page_config(
     page_title=PROFILE.page_title,
     page_icon=PROFILE.page_icon,
@@ -114,6 +125,7 @@ def load_asset(name: str) -> str:
 
 # The profile's brand comes after the stylesheet so its custom properties win.
 st.markdown(
+    f"<!-- build {_build()} -->"
     f"<style>{load_asset('app.css')}\n{PROFILE.brand_css}</style>",
     unsafe_allow_html=True,
 )
