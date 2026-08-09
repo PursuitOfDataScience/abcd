@@ -89,8 +89,6 @@ class Profile:
     # the UI, and it named a different deployment's subject in front of every
     # visitor — exactly the class of thing this file exists to make impossible.
     input_placeholder: str = "Ask anything…"
-    # (icon, card label, question actually sent)
-    examples: tuple[tuple[str, str, str], ...] = ()
     # CSS custom properties layered over static/app.css, so a deployment can be
     # rebranded without a second stylesheet. `brand_dark` is not optional in
     # practice: a single unconditional `:root` block overrides the stylesheet's

@@ -88,23 +88,8 @@ UPLOADS_ON = _flag("SAGE_UPLOADS", False)
 # 0 disables the cap.
 SESSION_LIMIT = max(0, int(setting("SAGE_SESSION_LIMIT", "40") or 0))
 
-# (icon, card label, question actually sent). The label is kept short so every
-# card is a single line; the question stays conversational for the model.
-# Replaced further down when the reader arrived from an article — the starter
-# cards are the clearest place to show that the assistant knows which one.
-EXAMPLES = list(PROFILE.examples)
 WELCOME_TITLE = PROFILE.welcome_title
 WELCOME_SUBTITLE = PROFILE.welcome_subtitle
-
-# Offered when the assistant is opened from an article. Deliberately about *this*
-# page rather than the archive: a reader who opened it here has a question about
-# what is in front of them.
-ARTICLE_EXAMPLES = (
-    ("📝", "Summarise it", "Summarise this article in a few sentences."),
-    ("🔢", "The key numbers", "What are the key numbers and results in this article?"),
-    ("🛠️", "How it was done", "What methods, tools or data does this article use?"),
-    ("🔗", "Related articles", "What else on this site is related to this article?"),
-)
 
 st.set_page_config(
     page_title=PROFILE.page_title,
@@ -229,7 +214,6 @@ SYSTEM_PROMPT, CONTEXT_DOC = context.apply(SYSTEM_PROMPT, CORPUS, CONTEXT_URL)
 if CONTEXT_DOC is not None:
     WELCOME_TITLE = "Ask about this article"
     WELCOME_SUBTITLE = CONTEXT_DOC.title
-    EXAMPLES = list(ARTICLE_EXAMPLES)
 if CONTEXT_URL and CONTEXT_DOC is None:
     # Worth a line in the log: it means the site and this corpus disagree about a
     # URL, which is what happens when a post is published and the corpus has not
@@ -593,26 +577,6 @@ if not has_messages:
         unsafe_allow_html=True,
     )
 
-    with st.container(key="examples"):
-        for row in range(0, len(EXAMPLES), 2):
-            columns = st.columns(2, gap="medium")
-            for offset, column in enumerate(columns):
-                position = row + offset
-                if position >= len(EXAMPLES):
-                    continue
-                icon, label, question = EXAMPLES[position]
-                with column, st.container(key=f"example-card-{position}"):
-                    # No `help=`: a tooltip on a card that already says what it
-                    # does is just a black box following the cursor around.
-                    if st.button(
-                        f"{icon} {label}",
-                        key=f"example-{position}",
-                        use_container_width=True,
-                    ):
-                        # With the attachments, like any other question. Without
-                        # them, a file attached on the landing screen — where the
-                        # chips do render — was cleared by the send and never seen.
-                        start_new_turn(question, st.session_state.attachments)
 else:
     # Marker only: app.js keys page-scroll behaviour off its presence — without it
     # the screen is the landing screen, which always starts at the top.

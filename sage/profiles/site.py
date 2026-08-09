@@ -168,29 +168,11 @@ PROFILE = Profile(
     welcome_subtitle="Answers drawn from the articles on this site, with citations.",
     index_spinner="Indexing the articles…",
     input_placeholder="Ask anything about this site…",
-    # Labels stay under ~26 characters so each card is one line at every width the
-    # layout check renders; the questions behind them stay conversational.
-    examples=(
-        ("🧠", "Pretraining from scratch",
-         "How were the Argonne language models pretrained from scratch?"),
-        ("💭", "Making a model reason",
-         "How was a small language model taught to reason?"),
-        # "What ggplot2 techniques show up most often in these analyses?" was here
-        # and retrieved the biography page. The synonym group expands `ggplot` to
-        # `visualization`, the About note lists "data visualization" among the
-        # author's interests, and a vague meta-question has nothing else to grip.
-        # Naming an article-shaped thing to find — a chart being built — lands on a
-        # real post. Every card in this list is checked the same way: run the
-        # question against the index and see what comes back first.
-        ("📊", "Charts with ggplot2",
-         "Which articles use ggplot2 to build a chart?"),
-        ("⚡", "The HPC tools",
-         "What are rapiDU and slurmwatch, and what problems do they solve?"),
-        ("📚", "Where to start with R",
-         "Which articles are the best introduction to the tidyverse?"),
-        ("👤", "About the author",
-         "Who writes this site and what do they work on?"),
-    ),
+    # No starter cards, and no field for them: six buttons of someone else's
+    # questions on the first thing a reader sees, and the one that was measurably
+    # wrong — a ggplot2 question that retrieved the biography page — is the
+    # argument against the other five too. A suggestion that answers badly is worse
+    # than no suggestion. The composer's placeholder says what this is for.
     # The site is Inter on white with a blue accent (`--link-color: #2563eb` in the
     # website's own custom.css); Sage's stock maroon belongs to another deployment
     # look borrowed here. These override static/app.css.
