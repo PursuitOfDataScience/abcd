@@ -12,6 +12,7 @@ import hashlib
 import html
 import logging
 import os
+import subprocess
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -91,15 +92,37 @@ SESSION_LIMIT = max(0, int(setting("SAGE_SESSION_LIMIT", "40") or 0))
 WELCOME_TITLE = PROFILE.welcome_title
 WELCOME_SUBTITLE = PROFILE.welcome_subtitle
 
-# The commit this tree was exported from, rendered where a reader never sees it and
-# anyone debugging can. `tools/export_app.py` writes BUILD; it is absent when the app
-# is run from a checkout rather than an export, which is itself the answer.
+# The commit this build came from, rendered where a reader never sees it and anyone
+# debugging can. "Is the fix actually live?" has now been asked three times and
+# guessed at three times, most recently while a broken stylesheet was on screen and
+# the stamp meant to settle it was the thing that was broken.
+#
+# Two deployment shapes, so two sources. `tools/export_app.py` writes BUILD into the
+# slim tree it publishes. Community Cloud deploying straight from a branch — which is
+# what DEPLOYING.md §3 describes and what this app does — clones the repository
+# instead, so there is no BUILD and the SHA has to come from the clone. Returning
+# "source" for that case, as this first did, made the stamp useless on the only
+# deployment that exists: it said the same word before and after every push.
+#
+# Both are best-effort and neither can take the app down with it: a missing file, no
+# git, no `.git`, or a hung subprocess all fall through to "unknown".
 def _build() -> str:
+    here = os.path.dirname(os.path.abspath(__file__))
     try:
-        with open(os.path.join(os.path.dirname(__file__), "BUILD"), encoding="utf-8") as fh:
-            return fh.read().strip()
+        with open(os.path.join(here, "BUILD"), encoding="utf-8") as fh:
+            stamped = fh.read().strip()
+        if stamped:
+            return stamped
     except OSError:
-        return "source"
+        pass
+    try:
+        sha = subprocess.run(
+            ["git", "-C", here, "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=10, check=False,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        sha = ""
+    return sha or "unknown"
 
 
 st.set_page_config(
@@ -124,9 +147,22 @@ def load_asset(name: str) -> str:
 
 
 # The profile's brand comes after the stylesheet so its custom properties win.
+#
+# `<style>` must be the very first thing in this string, and the build stamp is a CSS
+# comment inside it rather than an HTML comment before it. st.markdown parses its
+# argument as Markdown before any of it is HTML, and in CommonMark a raw-HTML block
+# opened by `<!--` ends on the line containing `-->` — not at the `</style>` a
+# thousand lines later. A `<!-- build … --><style>…` prefix therefore closed the
+# block at the end of its own line and handed the entire remaining stylesheet to the
+# Markdown parser, which rendered it as visible prose: two hundred bullets of CSS
+# above the conversation, `[class*="st-key-…"]` with the asterisks eaten as emphasis,
+# and not one rule applied, because there was no longer a style element to apply.
+# Opened by `<style>` the block is CommonMark type 1 instead, which ends only at the
+# closing tag, so the stylesheet cannot be reinterpreted however many blank lines and
+# asterisks it contains. tests/test_app_smoke.py::TestStylesheet holds the invariant.
 st.markdown(
-    f"<!-- build {_build()} -->"
-    f"<style>{load_asset('app.css')}\n{PROFILE.brand_css}</style>",
+    f"<style>/* build {_build()} */\n"
+    f"{load_asset('app.css')}\n{PROFILE.brand_css}</style>",
     unsafe_allow_html=True,
 )
 components.html(f"<script>{load_asset('app.js')}</script>", height=0)
