@@ -129,6 +129,12 @@
      * an edge rather than being two widths in one column. */
     --input-max: min(620px, 100%);
     --user-bubble-max: 78%;
+    /* The answer's surface and the rule down its left edge. Deliberately quiet: it
+     * marks the passage without competing with the question's filled bubble, and
+     * the text on it is the same --text-primary as the rest of the page, so nothing
+     * here can drop below contrast. */
+    --answer-bg: rgba(37, 99, 235, 0.045);
+    --answer-rule: rgba(37, 99, 235, 0.34);
     --radius-sm: 8px;
     --radius-md: 14px;
     --radius-lg: 24px;
@@ -177,6 +183,9 @@
         --danger-border: rgba(239, 68, 68, 0.3);
 
         --shadow-md: 0 4px 15px rgba(0, 0, 0, 0.35);
+        /* Lifted for a near-black page, where a 4.5% tint of anything is invisible. */
+        --answer-bg: rgba(120, 170, 255, 0.07);
+        --answer-rule: rgba(120, 170, 255, 0.38);
     }
 }
 
@@ -872,10 +881,21 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
  * where every pixel is space between the answer and the input box. */
 [class*="st-key-answer-"] { margin: 0 0 clamp(0.5rem, 1.2vw, 0.85rem) 0; }
 
+/* The answer needs to read as a different kind of thing from the question, and the
+ * question is a filled blue bubble pushed to the right.
+ *
+ * Not a mirrored bubble on the left. This column is 380px wide; a bubble spends
+ * ~36px of it on padding and rounding, and an answer is the long side of the
+ * conversation — the one thing that should get the full measure. What separates
+ * them here is alignment, a rule down the side in the brand colour, and a surface
+ * a shade off the page: the question is a solid block on the right, the answer an
+ * open passage on the left. */
 .stChatMessage {
-    background: transparent !important;
+    background: var(--answer-bg) !important;
     border: none !important;
-    padding: 0 !important;
+    border-left: 2px solid var(--answer-rule) !important;
+    padding: 2px 0 2px 12px !important;
+    border-radius: 0 6px 6px 0 !important;
     max-width: 100% !important;
     width: auto !important;
 }
@@ -1195,5 +1215,7 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
     }
 
     .user-bubble { background: none !important; color: #000 !important; border: 1px solid #999; }
+    .stChatMessage { background: none !important; border-left: none !important;
+                     padding-left: 0 !important; }
     .stChatMessage, .source-chip { color: #000 !important; }
 }

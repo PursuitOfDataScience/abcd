@@ -985,23 +985,11 @@
         });
     }
 
-    function addAnswerCopyButtons() {
-        // Keyed answer containers only, so the streaming status row never gets one.
-        var answers = doc.querySelectorAll('[class*="st-key-answer-"] .stChatMessage');
-        answers.forEach(function (message) {
-            if (message.dataset.sageCopy === 'true') return;
-            message.dataset.sageCopy = 'true';
-            message.style.setProperty('position', 'relative');
-            var btn = makeCopyButton(function () {
-                var body = message.querySelector('[data-testid="stChatMessageContent"]') || message;
-                return body.innerText || body.textContent || '';
-            }, 'Copy this answer');
-            btn.style.top = '0';
-            btn.style.right = '0';
-            btn.style.opacity = '0.65';
-            message.appendChild(btn);
-        });
-    }
+    // `addAnswerCopyButtons()` stood here. It hung a copy button at top-right
+    // *inside* the answer, absolutely positioned over the first line of text —
+    // which is what it looked like: a control sitting on the words. An answer here
+    // is a paragraph and a citation, short enough to select by hand, and the code
+    // blocks keep their own copy buttons, which are the part worth copying.
 
     /* --- send blocking during generation -------------------------------- */
 
@@ -1079,7 +1067,6 @@
         resetComposerOnClear();
         closePickerOnPick();
         addCodeCopyButtons();
-        addAnswerCopyButtons();
         blockSendWhileProcessing();
         // `scroller()` first, because it is the one that asks which element actually
         // scrolls instead of assuming. This line named stMain outright while
