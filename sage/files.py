@@ -136,8 +136,25 @@ class Attachment:
         return f"data:{self.mime};base64,{base64.b64encode(self.data).decode()}"
 
 
+class PdfSupportMissing(ImportError):
+    """Neither PDF reader is installed in this deployment.
+
+    An `ImportError` on purpose: `process()` already turns that into a refusal the
+    reader can act on, and a bare `Exception` would land in the branch below it and
+    report a perfectly good file as "corrupt or encrypted".
+    """
+
+
 def _extract_pdf(data: bytes) -> tuple[str, int]:
-    """Text and page count. Prefers PyMuPDF, falls back to pypdf."""
+    """Text and page count. Prefers PyMuPDF, falls back to pypdf.
+
+    Both are optional, and on the public deployment neither is installed. PyMuPDF
+    alone is a 24.6 MB wheel — larger than Streamlit — and it is downloaded and
+    installed on every cold start of a host that sleeps, to serve an upload control
+    that is off by default there. So it moved to `requirements-uploads.txt`, and
+    this degrades to a sentence the composer can show instead of an ImportError
+    traceback in front of a reader.
+    """
     try:
         import pymupdf  # noqa: PLC0415  (optional, imported on demand)
 
@@ -148,7 +165,12 @@ def _extract_pdf(data: bytes) -> tuple[str, int]:
     except Exception as exc:  # corrupt/encrypted PDF
         logger.warning("PyMuPDF failed, falling back to pypdf: %s", exc)
 
-    from pypdf import PdfReader  # noqa: PLC0415
+    try:
+        from pypdf import PdfReader  # noqa: PLC0415
+    except ImportError as exc:
+        raise PdfSupportMissing(
+            "This deployment cannot read PDFs. Paste the text instead."
+        ) from exc
 
     reader = PdfReader(BytesIO(data))
     pages = [page.extract_text() or "" for page in reader.pages]
@@ -220,7 +242,10 @@ def process(filename: str, data: bytes) -> tuple[Attachment | None, str | None]:
         try:
             text, pages = _extract_pdf(data)
         except ImportError:
-            return None, "PDF support is unavailable on this server."
+            return None, (
+                f"This assistant cannot read PDFs, so {filename} was not attached. "
+                "Paste the text you want asked about instead."
+            )
         except Exception as exc:
             logger.warning("PDF extraction failed for %s: %s", filename, exc)
             return None, f"Could not read {filename}. It may be corrupt or encrypted."

@@ -1,0 +1,49 @@
+# Keeps the hosted app from going to sleep.
+#
+# Streamlit Community Cloud suspends an app after roughly twelve hours without
+# traffic. Waking it is slow for a reason that has nothing to do with this code:
+# the container is rebuilt and the dependencies reinstalled before anything runs.
+# The app's own startup — importing the package, building the corpus and the BM25
+# index over 116 documents — is 1.2 seconds.
+#
+# So the fix is to not let it sleep. A request every ten minutes is enough, and is
+# a far smaller load than the wake it prevents.
+#
+# Two honest caveats:
+#   * GitHub's scheduled runners are best-effort and often fire late, sometimes by
+#     ten or fifteen minutes. That is fine for a twelve-hour timeout.
+#   * Scheduled workflows are disabled automatically after sixty days without any
+#     commit to the repository. Re-enable it from the Actions tab if the app starts
+#     sleeping again.
+#
+# Delete this file to stop.
+
+name: keepalive
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Request the app
+        run: |
+          set -uo pipefail
+          URL="https://yu-site-assistant.streamlit.app/"
+          # --max-time, because a sleeping app holds the connection open while it
+          # wakes and an unbounded curl would sit here for the whole job timeout.
+          # A non-2xx is not a failure worth a red tick: the point is the request,
+          # not the response, and a red X every ten minutes trains you to ignore it.
+          code=$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 90 "$URL" || echo "000")
+          echo "GET $URL -> $code"
