@@ -999,7 +999,11 @@
         var container = doc.querySelector('[data-testid="stChatInput"]');
         if (!container) return;
         var existing = doc.getElementById(BLOCK_STYLE_ID);
-        var send = container.querySelector('button');
+        // By name. `container.querySelector('button')` was the injected paperclip, or
+        // Streamlit's file-upload button — so the real submit control was never marked
+        // during generation (screen readers announced it as live) and `ready()`'s
+        // aria-disabled test, which reads this attribute, could never be true.
+        var send = sendButton();
 
         if (isProcessing()) {
             if (!existing) {
@@ -1065,11 +1069,20 @@
     // Well past the longest thing the bubble will send (it caps a passage at 280) and
     // short enough that a hostile framer cannot paste a book into the composer.
     var ASK_LIMIT = 2000;
-    // Attempts, one per pass of sync(). Generous because the reason to wait is a turn
-    // that is still generating, during which the composer is deliberately dead. Past
-    // it the site is told, and rebuilds the frame around the question rather than
-    // leaving the click unanswered.
-    var ASK_TRIES = 60;
+    // Two budgets, because they measure different things and sharing one counter got
+    // the important case exactly backwards.
+    //
+    // ASK_PRESSES is attempts to actually submit — spent only on passes that press
+    // something. ASK_PATIENCE is wall-clock, and is what covers waiting: for the
+    // composer to exist, or for a turn to finish generating.
+    //
+    // A single per-pass counter was spent by the waiting rather than by the trying.
+    // Passes are driven by the page changing, and a generating answer changes it on
+    // every token, so a question posted two seconds into a twenty-second answer burnt
+    // all sixty of them inside a second or two and was abandoned before the composer
+    // was ever usable — the comment here previously claimed the opposite.
+    var ASK_PRESSES = 6;
+    var ASK_PATIENCE = 180000;
 
     function reply(id, type, ok) {
         try {
@@ -1142,8 +1155,12 @@
         var box = composer();
         if (!box) return;                       // not rendered yet; next pass
         view.__sageUrlDraft = true;
-        if (box.value) return;                  // the reader got there first
-        setFieldValue(box, text.slice(0, ASK_LIMIT));
+        var passage = text.slice(0, ASK_LIMIT);
+        // Added after the reader's own words rather than over them, which is what the
+        // posted path does too. Dropping it silently, as this used to, loses the
+        // passage with no way to tell anyone.
+        if (box.value) passage = box.value.replace(/\s+$/, '') + ' ' + passage;
+        setFieldValue(box, passage);
         caretToEnd(box);
     }
 
@@ -1179,11 +1196,28 @@
 
         var box = composer();
 
+        // Wall clock, and the only thing that ends a delivery that is merely waiting.
+        if (Date.now() > pending.until) {
+            // Whatever was typed goes back out with it. Left behind, an abandoned
+            // passage sits in the box and is silently prefixed to whatever the reader
+            // types next — the exact hazard the note below is about.
+            if (box && box.value === pending.text) setFieldValue(box, '');
+            view.__sagePending = null;
+            view.__sageAsked = pending.id;
+            reply(pending.id, 'sage:asked', false);
+            return;
+        }
+
         // Sent, or so it was claimed. Streamlit empties the composer on submit, so
         // this is the difference between "pressed" and "sent" — and reporting the
         // press is how a control that does nothing gets reported as working.
+        //
+        // A missing box is not evidence of either. It means the chat input is between
+        // mounts, which happens on any rerun; reading it as success reported questions
+        // as delivered that had not been.
         if (pending.sent) {
-            if (!box || box.value !== pending.text) {
+            if (!box) return;
+            if (box.value !== pending.text) {
                 view.__sagePending = null;
                 view.__sageAsked = pending.id;
                 reply(pending.id, 'sage:asked', true);
@@ -1192,23 +1226,26 @@
             pending.sent = false;   // it did not take; fall through and try again
         }
 
-        pending.tries -= 1;
-        if (pending.tries < 0) {
-            view.__sagePending = null;
-            view.__sageAsked = pending.id;
-            reply(pending.id, 'sage:asked', false);
-            return;
-        }
-
         // Never mid-answer — for something being *sent*. `blockSendWhileProcessing`
         // kills the button then on purpose, and text placed now would sit in the box
         // and go out attached to whatever the reader typed next. A draft is only
         // being typed, which is allowed while an answer is still arriving.
+        //
+        // Costs nothing. Waiting is not an attempt.
         if (!box || (isProcessing() && !pending.draft)) return;
 
         // Step one. Typing is its own pass: the input event has to be seen by React
         // before the control it enables can be pressed.
         if (box.value !== pending.text) {
+            // Never over the reader's own words. `draftFromUrl` has always had this
+            // rule and the posted path did not, so a passage selected while a half-
+            // typed question sat in the box replaced it — and then took the caret.
+            // The passage is added after what they wrote instead; nothing is lost.
+            if (box.value && !pending.typed) {
+                if (!pending.draft) return;   // a question would be sent mangled
+                pending.text = box.value.replace(/\s+$/, '') + ' ' + pending.text;
+            }
+            pending.typed = true;
             setFieldValue(box, pending.text);
             schedule();
             return;
@@ -1230,15 +1267,33 @@
         // of them have gone by that it is not going to wake, and Enter is tried
         // instead. Streamlit sends on a bare Enter, so this is a second route to the
         // same submit rather than a workaround for it.
+        //
+        // Counted in presses rather than in passes. Against a shared per-pass counter
+        // this grace period was already spent by the time a question that had waited
+        // out an answer got here, so Enter fired on the first check — into a composer
+        // React had not re-rendered around yet, where it does nothing.
         var send = sendButton();
-        if (ready(send)) {
-            try { send.click(); } catch (err) { /* replaced mid-rerun */ }
-        } else if (pending.tries < ASK_TRIES - 4) {
-            pressEnter(box);
-        } else {
-            schedule();
+        if (!ready(send)) {
+            pending.dead = (pending.dead || 0) + 1;
+            if (pending.dead < 4) {
+                schedule();
+                return;   // still waking, and waiting is not an attempt
+            }
+        }
+        pending.presses += 1;
+        if (pending.presses > ASK_PRESSES) {
+            if (box.value === pending.text) setFieldValue(box, '');
+            view.__sagePending = null;
+            view.__sageAsked = pending.id;
+            reply(pending.id, 'sage:asked', false);
             return;
         }
+        if (ready(send)) {
+            try { send.click(); } catch (err) { /* replaced mid-rerun */ }
+        } else {
+            pressEnter(box);
+        }
+        pending.dead = 0;
         pending.sent = true;
         schedule();
     }
@@ -1282,8 +1337,9 @@
                 return;
             }
             view.__sagePending = {
-                text: text, id: data.id, tries: ASK_TRIES, sent: false,
-                draft: data.mode === 'draft',
+                text: text, id: data.id, sent: false, presses: 0, dead: 0,
+                typed: false, draft: data.mode === 'draft',
+                until: Date.now() + ASK_PATIENCE,
             };
             // Receipt first and immediately. It is the only thing the site puts a
             // deadline on; everything after it may take as long as it takes.
