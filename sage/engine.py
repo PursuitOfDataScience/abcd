@@ -208,7 +208,20 @@ def run_turn(
 
     # An empty bubble is not an answer, and neither is the last thing a model said
     # on its way to a tool call. Both end here.
+    #
+    # Logged, and logged apart from the round-limit warning above, because the two
+    # look identical from the outside and have nothing to do with each other. A
+    # model that returns no text and asks for no tool on its first round has not run
+    # out of anything: it answered with nothing at all, which is what a spent key
+    # looks like on a provider that reports exhaustion as an empty 200 rather than as
+    # an error. Without this line the deployment's logs say nothing and the only
+    # symptom is a reader being told to rephrase a perfectly good question.
     if not final_text.strip():
+        logger.warning(
+            "Empty answer from %s after %d round(s), %d search(es): "
+            "the model returned no text and asked for no tool",
+            model.key, round_number + 1, len(runner.queries),
+        )
         final_text = UNFINISHED
 
     sources = _sources(runner)
