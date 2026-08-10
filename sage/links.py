@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from . import profiles
+from . import cite, profiles
 from .corpus import Corpus
 from .profile import MARKDOWN
 
@@ -27,7 +27,10 @@ def resolve(target: str, corpus: Corpus) -> str | None:
 
     chunk = corpus.chunk(target)
     if chunk is not None:
-        return chunk.url
+        # The inline citations are the ones read in the flow of an answer, so they
+        # get the same treatment as the Sources strip: the link points at the
+        # section *and* says which passage in it was used. See `sage/cite.py`.
+        return cite.url_for(chunk)
 
     base, _, anchor = target.partition("#")
     base = base.strip().lstrip("./")

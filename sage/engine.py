@@ -11,15 +11,25 @@ The contract is deliberately small:
     for event in run_turn(...):
         match event.kind:
             case "status": ...        # a short line naming what is happening
-            case "stream": ...        # event.deltas is an iterator of text pieces
-            case "reset":  ...        # discard what was streamed; a tool round follows
+            case "notice": ...        # a failover is being attempted
             case "answer": ...        # event.data has the final text and its sources
 
-`stream` hands over an *iterator* rather than a string because that is what a
-typewriter effect needs, and because Streamlit's `st.write_stream` consumes one.
-Callers that do not want to stream can pass the iterator to `"".join`. Either way
-the iterator must be drained before asking for the next event; `run_turn` drains
-whatever is left behind rather than losing text if a caller forgets.
+No partial text is handed out, and that is the deliberate part.
+
+There used to be a `stream` event carrying an iterator of deltas, and a `reset`
+event telling the caller to throw away what it had just rendered. Every round was
+streamed as it arrived, including the rounds that end in a tool call, and models
+narrate those ("Let me search the articles for…"). So a sentence appeared in the
+answer bubble and was wiped a second later by the status line that replaced it.
+Whether a round is the answer or a preamble to a tool call is knowable only once
+its stream has ended, so there is no way to show text as it arrives *and* be sure
+it will not have to be taken back.
+
+What that costs is the typewriter effect on the answer: it now appears complete
+rather than a token at a time. What it buys is that nothing is ever shown to a
+reader and then removed, which is worth more: an answer that materialises a
+second later reads as considered, and one that erases itself reads as broken.
+The status line carries the waiting in the meantime.
 
 Failures are raised, not yielded: `run_turn` lets `llm.AssistantError` out so the
 caller can decide between retrying, failing over and giving up. `run_conversation`
@@ -42,8 +52,6 @@ from .tools import READ_DOC, SEARCH_DOCS, ToolRunner, gather_context, tool_schem
 logger = logging.getLogger(__name__)
 
 STATUS = "status"
-STREAM = "stream"
-RESET = "reset"
 NOTICE = "notice"
 ANSWER = "answer"
 
@@ -64,25 +72,31 @@ class Event:
     text: str = ""
     data: dict[str, Any] = field(default_factory=dict)
 
-    @property
-    def deltas(self) -> Iterator[str]:
-        """The text iterator carried by a `stream` event."""
-        return self.data["deltas"]
-
 
 def describe(calls: list[dict], corpus: Corpus) -> str:
-    """Say what is actually happening instead of a generic shimmer."""
+    """Name the *kind* of work in flight, and nothing more specific than that.
+
+    Every word this returns is written here. Nothing the model produced and nothing
+    from the corpus is interpolated into it: not the search query, not a `path`,
+    not a section label.
+
+    That is a privacy rule, not a style one. This status line is rendered in a panel
+    on a public website, and the corpus behind it is built from a private checkout:
+    the ids are file paths (`post/2026-08-09-dwellsy-rent-index.md#verdict`) and
+    `label` falls back to the bare filename whenever a path does not resolve, which
+    is exactly when the model has guessed at one. "Reading dwellsy-rent-index.md"
+    told a reader the name of a file in a repository that is not published, and the
+    echoed query told them how the retrieval prompt is phrased. Neither is anything a
+    visitor asked for, and both leak from a surface nobody thinks of as an output.
+
+    So the vocabulary is fixed and small: searching, reading, working.
+    """
     noun = (corpus.profile or profiles.active()).searching_noun
-    for call in calls:
-        if call["name"] == SEARCH_DOCS:
-            query = (call["input"].get("query") or "").strip()
-            return f"Searching {noun} for “{query}”" if query else f"Searching {noun}"
-    for call in calls:
-        if call["name"] == READ_DOC:
-            path = (call["input"].get("path") or "").strip()
-            chunk = corpus.chunk(path)
-            label = chunk.label if chunk else path.split("/")[-1]
-            return f"Reading {label}" if label else "Reading documentation"
+    names = {call["name"] for call in calls}
+    if SEARCH_DOCS in names:
+        return f"Searching {noun}"
+    if READ_DOC in names:
+        return f"Reading {noun}"
     return "Working"
 
 
@@ -117,31 +131,15 @@ def _sources(runner: ToolRunner) -> list[dict]:
     ]
 
 
-class _Drainable:
-    """A one-shot text iterator that remembers what it produced.
+def _round_text(turn) -> str:
+    """Read a round to the end and return everything it said.
 
-    `run_turn` needs the round's full text whether or not the caller bothered to
-    consume the iterator, and needs to know it is exhausted before moving on. A
-    caller that ignores a `stream` event entirely would otherwise skip a tool
-    round's worth of the model's reasoning and leave the loop reading a half-read
-    HTTP response.
+    The whole round is consumed here, with nothing yielded to the caller on the way,
+    because until the stream ends there is no way to know whether this text is the
+    answer or a preamble the model wrote before calling a tool. See the module
+    docstring: showing it and taking it back is the bug this shape exists to remove.
     """
-
-    def __init__(self, source: Iterator[str]) -> None:
-        self._source = source
-        self.text = ""
-        self.done = False
-
-    def __iter__(self) -> Iterator[str]:
-        for piece in self._source:
-            self.text += piece
-            yield piece
-        self.done = True
-
-    def drain(self) -> None:
-        if not self.done:
-            for _ in self:
-                pass
+    return "".join(turn.deltas())
 
 
 def run_turn(
@@ -184,20 +182,22 @@ def run_turn(
         turn = llm.start(provider, model.id, messages, None)
 
     for round_number in range(rounds + 1):
-        streamed = _Drainable(turn.deltas())
-        yield Event(STREAM, data={"deltas": iter(streamed)})
-        streamed.drain()
-        if streamed.text:
-            final_text = streamed.text
-
+        text = _round_text(turn)
+        # The answer is the text of the round that asked for no tools. Nothing
+        # else is: a tool round's narration goes no further than this loop, which
+        # is what stops a sentence appearing in the bubble and being erased by the
+        # status line a second later.
+        #
+        # It used to be kept as an answer-of-last-resort, and that is how "Let me
+        # look that up." came to be stored as an answer when a model spent every
+        # round calling tools. The reader is told that plainly below instead.
         if not turn.tool_calls or not use_tools:
+            final_text = text
             break
         if round_number == rounds:
             logger.warning("Tool-round limit reached without a final answer")
-            final_text = final_text or UNFINISHED
             break
 
-        yield Event(RESET)
         yield Event(STATUS, describe(turn.tool_calls, corpus))
         messages.append(turn.as_message())
         for call in turn.tool_calls:
@@ -205,6 +205,11 @@ def run_turn(
                 llm.tool_result_message(call, runner.run(call["name"], call["input"]))
             )
         turn = llm.start(provider, model.id, messages, schemas)
+
+    # An empty bubble is not an answer, and neither is the last thing a model said
+    # on its way to a tool call. Both end here.
+    if not final_text.strip():
+        final_text = UNFINISHED
 
     sources = _sources(runner)
     if runner.queries and not sources:

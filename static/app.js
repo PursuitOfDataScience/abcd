@@ -1061,10 +1061,30 @@
     // deliver one, and selecting a passage with the panel already open did nothing
     // at all.
     //
-    // `view.parent` is the website: this script runs in a components.html iframe
-    // inside the Streamlit page, which is itself inside the site's frame. Only the
-    // middle one is same-origin, so the site's message arrives on `view` and the
-    // reply goes up to `view.parent` by postMessage like any cross-origin pair.
+    // Then it still did nothing, for months, because of the sentence that used to be
+    // here: "`view.parent` is the website". It is not.
+    //
+    // On Streamlit Community Cloud, `https://<app>.streamlit.app/?embed=true` serves
+    // a host shell (the page that draws the "Built with Streamlit" bar), and that
+    // shell iframes the real app at `/~/+/?embed=true`. So from this script:
+    //
+    //     window        the components.html iframe this runs in
+    //     view          the Streamlit app                       <- listened here
+    //     view.parent   Community Cloud's host shell            <- replied here
+    //     view.top      the website                             <- actually the site
+    //
+    // The site posted its question to the window it framed, which is the shell, and
+    // this script listened one level below it; the receipt went to the shell, which
+    // is not the site. Two correct-looking halves of a protocol, neither of them
+    // pointing at the other. A URL parameter still worked, because the shell
+    // forwards the query string, which is why the *first* passage always arrived
+    // and none of the rest did.
+    //
+    // Nothing here assumes a shape any more. The question is listened for on every
+    // window from this one up that is same-origin enough to attach a listener to,
+    // the reply goes back to whichever window actually sent the question, and the
+    // app announces itself to the top window on load so the site can post straight
+    // to it. The site does the mirror image of this; either half alone is enough.
 
     // Well past the longest thing the bubble will send (it caps a passage at 600) and
     // short enough that a hostile framer cannot paste a book into the composer.
@@ -1084,14 +1104,54 @@
     var ASK_PRESSES = 6;
     var ASK_PATIENCE = 180000;
 
-    function reply(id, type, ok) {
-        try {
-            if (view.parent && view.parent !== view) {
-                view.parent.postMessage(
-                    { source: 'sage-app', type: type, id: id, ok: !!ok }, '*'
-                );
+    // Who to answer. Whoever sent the question, remembered when it arrived, and
+    // before anything has arrived, the top window, which is the site whenever this
+    // app is embedded at all and is this app itself when it is not, in which case
+    // posting to it costs a message nobody is listening for.
+    //
+    // `top` and `parent` are readable across origins and can be posted to; nothing
+    // else about them can be touched, which is why this is a Window and an origin
+    // rather than anything read off the document behind it.
+    function hostWindow() {
+        var known = view.__sageHost;
+        if (known && known.win) {
+            try {
+                if (!known.win.closed) return known;
+            } catch (err) { /* the window has gone */ }
+        }
+        var candidates = [];
+        try { candidates.push(view.top); } catch (err) { /* not reachable */ }
+        try { candidates.push(view.parent); } catch (err) { /* not reachable */ }
+        for (var i = 0; i < candidates.length; i++) {
+            if (candidates[i] && candidates[i] !== view) {
+                return { win: candidates[i], origin: '*' };
             }
-        } catch (err) { /* nothing above us, or it refused the message */ }
+        }
+        return null;
+    }
+
+    function tell(message) {
+        var host = hostWindow();
+        if (!host) return false;
+        try {
+            host.win.postMessage(message, host.origin || '*');
+            return true;
+        } catch (err) {
+            return false;   // nothing above us, or it refused the message
+        }
+    }
+
+    function reply(id, type, ok) {
+        tell({ source: 'sage-app', type: type, id: id, ok: !!ok });
+    }
+
+    // "I am here, and this is the window to post to."
+    //
+    // Unprompted and cheap, because the alternative is the site guessing which of
+    // several nested frames is the app, and the guess it used to make was wrong.
+    // Carries nothing: it is an address, not a payload.
+    function announce() {
+        tell({ source: 'sage-app', type: 'sage:hello' });
     }
 
     function composer() {
@@ -1343,6 +1403,31 @@
         schedule();
     }
 
+    // Every window from this one up that a listener can actually be attached to.
+    //
+    // A cross-origin window cannot be listened on at all, so the chain stops at the
+    // first one that refuses to hand over its document. On Community Cloud it does
+    // not refuse: the host shell and the app are the same origin, so a question
+    // posted to the shell, which is what a site that has not heard the HELLO will
+    // do, is heard here too.
+    function listeningPosts() {
+        var posts = [window];
+        var current = window;
+        for (var level = 0; level < 4; level++) {
+            var up = null;
+            try { up = current.parent; } catch (err) { break; }
+            if (!up || up === current) break;
+            try {
+                void up.document;          // throws on a cross-origin window
+            } catch (err) {
+                break;
+            }
+            posts.push(up);
+            current = up;
+        }
+        return posts;
+    }
+
     // Re-registered on every pass, the way `addPromptHistory` is: this closure is
     // torn down whenever Streamlit re-renders the component iframe, and a listener
     // left on the parent window would be pointing into a document that no longer
@@ -1355,6 +1440,12 @@
             var data = event.data;
             if (!data || data.source !== 'sage-site' || data.type !== 'sage:ask') return;
             if (typeof data.text !== 'string') return;
+            // Where the answer goes, taken from the question rather than deduced
+            // from the frame tree. Recorded before anything can fail below, so a
+            // question that is refused is still refused *to the site*.
+            if (event.source) {
+                view.__sageHost = { win: event.source, origin: event.origin || '*' };
+            }
             // Leading whitespace only. A draft ends `— ` deliberately: that trailing
             // space is where the caret lands and where the reader starts typing, and
             // trimming both ends put the caret hard against the dash.
@@ -1392,10 +1483,59 @@
             reply(data.id, 'sage:ack', true);
             schedule();
         };
-        view.addEventListener('message', onMessage);
+        var posts = listeningPosts();
+        posts.forEach(function (post) {
+            try { post.addEventListener('message', onMessage); } catch (err) { /* gone */ }
+        });
         view.__sageAskOff = function () {
-            view.removeEventListener('message', onMessage);
+            posts.forEach(function (post) {
+                try {
+                    post.removeEventListener('message', onMessage);
+                } catch (err) { /* window gone */ }
+            });
         };
+    }
+
+    /* --- following a citation into the page behind the panel ---------------- */
+
+    // A source chip for the article the reader already has open is not a link to
+    // somewhere else. Clicking one asks the website to scroll that article to the
+    // cited section and mark it, which is the question the chip is
+    // answering, "where is this?", rather than opening a second tab on the page already in
+    // view and losing the conversation.
+    //
+    // app.py marks those chips (`source-chip--here`); every other chip stays an
+    // ordinary link to another page and is not touched here. The anchor and the
+    // quote are read off the href rather than passed separately, so there is one
+    // description of the citation and not two that can disagree.
+    function followCitationsInPlace() {
+        if (doc.body.dataset.sageCiteHook) return;
+        doc.body.dataset.sageCiteHook = 'true';
+        doc.addEventListener('click', function (event) {
+            var target = event.target;
+            var chip = target && target.closest
+                ? target.closest('a.source-chip--here')
+                : null;
+            if (!chip) return;
+            var url;
+            try {
+                url = new view.URL(chip.href, view.location.href);
+            } catch (err) {
+                return;                       // unparseable: let it open normally
+            }
+            var anchor = url.searchParams.get('sage-cite')
+                || String(url.hash || '').replace(/^#/, '');
+            var quote = url.searchParams.get('sage-quote') || '';
+            if (!anchor && !quote) return;
+            // Only once the site has been told. A `preventDefault` on a message
+            // that did not go anywhere is a chip that does nothing, which is the
+            // whole class of bug this file is being edited for.
+            var sent = tell({
+                source: 'sage-app', type: 'sage:cite', anchor: anchor, quote: quote,
+                url: chip.href,
+            });
+            if (sent) event.preventDefault();
+        }, true);
     }
 
     /* --- scheduling ------------------------------------------------------ */
@@ -1412,6 +1552,7 @@
         // neither half can be skipped by the other, and so neither can cost the pass
         // its layout.
         try { acceptQuestions(); } catch (err) { /* keep the pass going */ }
+        try { followCitationsInPlace(); } catch (err) { /* keep the pass going */ }
         try { draftFromUrl(); } catch (err) { /* keep the pass going */ }
         try { drainAsk(); } catch (err) { /* keep the pass going */ }
 
@@ -1482,6 +1623,22 @@
     // laid out around the stylesheet's guess at the input bar rather than its
     // measured height, and that is a frame the reader sees.
     safeSync();
+
+    // And say where we are, immediately and then a few more times.
+    //
+    // Repeated because this is a one-way announcement with nothing to retry it: if
+    // it lands before the site's own listener exists it is simply gone, and the
+    // site is back to guessing which frame is the app. Three copies over four
+    // seconds cost nothing and cover a page still parsing, a frame still loading,
+    // and an app that woke up slowly.
+    try {
+        announce();
+        [400, 1500, 4000].forEach(function (delay) {
+            window.setTimeout(function () {
+                try { announce(); } catch (err) { /* nothing above us */ }
+            }, delay);
+        });
+    } catch (err) { /* not embedded */ }
     new MutationObserver(schedule).observe(doc.body, { childList: true, subtree: true });
     // Streaming appends text nodes that sometimes do not trigger the observer.
     //

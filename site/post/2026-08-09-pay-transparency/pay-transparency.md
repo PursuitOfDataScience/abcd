@@ -3,7 +3,7 @@ Title: Pay-Transparency Mandates in 51.9 Million Job Postings: Measurement, With
 Date: 2026-08-09
 ---
 
-**Abstract.** Twelve US states require employers to publish a pay range in the job advertisement itself. I measure compliance in a corpus of **51,864,055 LinkedIn job postings** collected monthly from February to July 2026, of which 23,970,734 are distinct and 14,250,750 are locatable to a US state. Three findings follow. First, the obvious measure is the wrong one: LinkedIn’s structured salary field records whether an employer used a platform feature, not whether it stated a range, and it understates the mandate’s association with disclosure roughly fivefold. Reading the range out of the description text instead — with an extractor validated against 2,244,205 employer-written labels at 89.8 % precision — raises the raw mandate-minus-no-law gap from 5.7 to **28.4 percentage points**. Second, the gap is not composition. Comparing a single firm with itself across a state line gives **+19.1 pp** in disclosure by any means, and the estimate does not fall when the identical job title at the same employer is held fixed, when the sample is restricted to firms too large for any statutory exemption, or when the comparison is confined to one commuting zone; none of 500 randomly drawn placebo assignments reproduces it. Third, the law travels with the firm: inside no-law states only, firms that also post into a mandate state disclose **13.8 pp** more than matched firms that do not, roughly seven-tenths of the effect measured inside the mandate states themselves. Two null results are reported with equal weight — mandates do not widen posted ranges, and a city-level placebo manufactures a spurious effect. Every estimate is a cross-sectional association rather than a causal effect: the corpus contains no pre-period and no realised wages.
+**Abstract.** Twelve US states require employers to publish a pay range in the job advertisement itself. I measure compliance in a corpus of **51,864,055 LinkedIn job postings** collected monthly from February to July 2026, of which 23,970,734 are distinct and 14,250,750 are locatable to a US state. Three findings follow. First, the obvious measure is the wrong one: LinkedIn’s structured salary field records whether an employer used a platform feature, not whether it stated a range, and it understates the mandate’s association with disclosure roughly fivefold. Reading the range out of the description text instead (with an extractor validated against 2,244,205 employer-written labels at 89.8 % precision) raises the raw mandate-minus-no-law gap from 5.7 to **28.4 percentage points**. Second, the gap is not composition. Comparing a single firm with itself across a state line gives **+19.1 pp** in disclosure by any means, and the estimate does not fall when the identical job title at the same employer is held fixed, when the sample is restricted to firms too large for any statutory exemption, or when the comparison is confined to one commuting zone; none of 500 randomly drawn placebo assignments reproduces it. Third, the law travels with the firm: inside no-law states only, firms that also post into a mandate state disclose **13.8 pp** more than matched firms that do not, roughly seven-tenths of the effect measured inside the mandate states themselves. Two null results are reported with equal weight: mandates do not widen posted ranges, and a city-level placebo manufactures a spurious effect. Every estimate is a cross-sectional association rather than a causal effect: the corpus contains no pre-period and no realised wages.
 
 ## 1. Introduction {#introduction}
 
@@ -15,7 +15,7 @@ Pakzad-Hurson (2023)](https://onlinelibrary.wiley.com/doi/abs/10.3982/ECTA19788)
 
 This article concerns a third and newer family: **posting mandates**, which regulate the advertisement rather than the employment relationship. A posting mandate is unusual among labour regulations in that compliance is directly observable, because the required disclosure is a piece of public text. That makes the first-order question empirical and, in principle, simple: do employers actually do it?
 
-In practice the question is hard for a mundane reason. The answer lives in the text of job advertisements, and job advertisements are not a dataset anyone keeps. The closest existing study is [Arnold, Quach and Taska (2025)](https://www.nber.org/papers/w34480), who use Burning Glass postings to show that Colorado’s 2021 mandate raised the share of postings containing salary information by about 30 pp — with substantial non-compliance — and that wages rose 1.3–3.6 %. [Batra, Michaud and Mongey
+In practice the question is hard for a mundane reason. The answer lives in the text of job advertisements, and job advertisements are not a dataset anyone keeps. The closest existing study is [Arnold, Quach and Taska (2025)](https://www.nber.org/papers/w34480), who use Burning Glass postings to show that Colorado’s 2021 mandate raised the share of postings containing salary information by about 30 pp (with substantial non-compliance) and that wages rose 1.3–3.6 %. [Batra, Michaud and Mongey
 (2023)](https://www.nber.org/papers/w31984) document the other side of the same coin: online job posts contain very little wage information to begin with.
 
 ### 1.1 Contribution {#contribution}
@@ -25,7 +25,7 @@ I add three things, in order of how much I think they matter.
 1. **A measurement result that changes the answer.** Job-posting corpora expose a structured salary field, and it is the natural thing to count. It is the wrong thing to count. On this corpus the structured field puts the mandate-minus-no-law gap at 5.7 pp; reading the range out of the description text puts it at 28.4 pp. The field measures platform-feature adoption, not disclosure. Section 4 documents this and validates the replacement against labels the corpus generates itself.
 2. **A within-firm design at a scale that permits holding the job fixed.** With 23.97 M distinct postings I can compare a single employer with itself across a legal border while holding its *exact job title* constant, restrict to firms above any statutory size threshold, and narrow to a single commuting zone in the manner of [Dube, Lester and Reich
 (2010)](https://direct.mit.edu/rest/article/92/4/945/57855/Minimum-Wage-Effects-Across-State-Borders). The estimate survives all three.
-3. **A spillover estimate.** Within-firm differencing removes spillovers by construction, so they have to be asked about separately — and they are what a legislator would want to know. Firms exposed to a mandate somewhere disclose substantially more in states that have no mandate at all.
+3. **A spillover estimate.** Within-firm differencing removes spillovers by construction, so they have to be asked about separately, and they are what a legislator would want to know. Firms exposed to a mandate somewhere disclose substantially more in states that have no mandate at all.
 
 The article inherits a methodological posture from the job-postings literature, in which [Hershbein and
 Kahn (2018)](https://www.aeaweb.org/articles?id=10.1257/aer.20161570) and [Deming and Kahn
@@ -82,7 +82,7 @@ Neither is the same as an employer stating a range. A firm that writes “$95,00
 group. The bold figure at the right of each group is the mandate-minus-no-law gap; it ranges from 5.7 to
 28.4 pp over the same postings and the same laws.] Figure 4: Share of US postings disclosing pay under four progressively broader definitions, by state law group. The bold figure at the right of each group is the mandate-minus-no-law gap; it ranges from 5.7 to 28.4 pp over the same postings and the same laws.
 
-The estimated effect of a mandate is therefore a property of the definition chosen. The rest of this article uses the broadest defensible definition — a range in the structured field *or* a salary-context range in the description text — and the remainder of this section earns the right to use it.
+The estimated effect of a mandate is therefore a property of the definition chosen. The rest of this article uses the broadest defensible definition (a range in the structured field *or* a salary-context range in the description text) and the remainder of this section earns the right to use it.
 
 ### 4.2 Extraction {#extraction}
 
@@ -108,7 +108,7 @@ Two threats deserve explicit treatment.
 reading the widget back to itself, the rate in the lower panel would be far higher on the left than on
 the right.] Figure 7: Prevalence of LinkedIn’s rendered widget text in the description column. If the extractor were reading the widget back to itself, the rate in the lower panel would be far higher on the left than on the right.
 
-**Recall, not precision, is the binding limitation.** The extractor returns a correct range 89.8 % of the time when it returns one, but recovers only 58.4 % of the ranges known to exist. This corpus cannot decompose the shortfall: an employer who fills the structured widget without repeating the number in the description is indistinguishable from a range the extractor failed to read. The consequence is the same either way and its direction is known — **every disclosure level reported below is a lower bound, and every gap is attenuated toward zero** by measurement error in the outcome.
+**Recall, not precision, is the binding limitation.** The extractor returns a correct range 89.8 % of the time when it returns one, but recovers only 58.4 % of the ranges known to exist. This corpus cannot decompose the shortfall: an employer who fills the structured widget without repeating the number in the description is indistinguishable from a range the extractor failed to read. The consequence is the same either way and its direction is known: **every disclosure level reported below is a lower bound, and every gap is attenuated toward zero** by measurement error in the outcome.
 
 ### 4.4 What the instrument is worth {#what-the-instrument-is-worth}
 
@@ -125,7 +125,7 @@ observations are not a subset of the structured ones; they are postings that nev
 
 ## 5. Empirical strategy {#empirical-strategy}
 
-Let \(g\) index a comparison group — a firm, a firm × job-title cell, or a metropolitan area. Within group \(g\), let \(n^T_g\) and \(n^C_g\) count postings in mandate and no-law states, and let \(\bar y^T_g\) and \(\bar y^C_g\) be the corresponding disclosure rates. The estimator is the weighted mean of within-group differences,
+Let \(g\) index a comparison group: a firm, a firm × job-title cell, or a metropolitan area. Within group \(g\), let \(n^T_g\) and \(n^C_g\) count postings in mandate and no-law states, and let \(\bar y^T_g\) and \(\bar y^C_g\) be the corresponding disclosure rates. The estimator is the weighted mean of within-group differences,
 
 \[\widehat{\Delta} \;=\; \frac{\sum_g w_g \, d_g}{\sum_g w_g}, \qquad d_g \;=\; \bar y^T_g - \bar y^C_g, \qquad w_g \;=\; \min\!\left(n^T_g,\; n^C_g\right),\]
 
@@ -135,7 +135,7 @@ with the standard error taken across groups,
 
 Weighting by the *smaller* of the two side counts is the point of the design. A firm with four thousand postings in one state and three in the other contributes almost nothing, so the estimate is not driven by firms that barely straddle the border. Only groups with postings on both sides enter at all, which is what makes the comparison within-firm rather than between-firm.
 
-The identifying assumption is not that mandate and no-law states are alike — Section 6.1 shows they are not — but that within an employer, and where stated within the same job title and the same commuting zone, the decision to publish a range differs across the border because of the law rather than because of something else that also changes at the state line. Sections 6.2–6.5 probe that assumption from four directions. None of these designs recovers a causal effect: all twelve mandates predate the data, so what is estimated throughout is a cross-sectional association under progressively tighter conditioning.
+The identifying assumption is not that mandate and no-law states are alike (Section 6.1 shows they are not) but that within an employer, and where stated within the same job title and the same commuting zone, the decision to publish a range differs across the border because of the law rather than because of something else that also changes at the state line. Sections 6.2–6.5 probe that assumption from four directions. None of these designs recovers a causal effect: all twelve mandates predate the data, so what is estimated throughout is a cross-sectional association under progressively tighter conditioning.
 
 ## 6. Results {#results}
 
@@ -147,7 +147,7 @@ Start with the comparison a reader would make first.
 point area is the state's posting count. Mandate states sit high on both, and the broad measure separates
 the two regimes almost completely.] Figure 10: Disclosure by state on the narrow measure (horizontal) and the broad measure (vertical); point area is the state’s posting count. Mandate states sit high on both, and the broad measure separates the two regimes almost completely.
 
-Two things are visible. On the broad measure the regimes barely overlap: every mandate state discloses more than every no-law state. On the structured measure they overlap freely, and several no-law states outrank mandate states outright — the measurement point of Section 4, restated at the level of individual jurisdictions. The six on-request states sit 1.4 pp above the no-law group, which is the right answer for a group facing no posting duty.
+Two things are visible. On the broad measure the regimes barely overlap: every mandate state discloses more than every no-law state. On the structured measure they overlap freely, and several no-law states outrank mandate states outright, the measurement point of Section 4, restated at the level of individual jurisdictions. The six on-request states sit 1.4 pp above the no-law group, which is the right answer for a group facing no posting duty.
 
 None of that settles anything, because a cross-state comparison is confounded by everything else that differs across states. California is not Mississippi with a different statute: it has a different industry mix, different firms and different occupations, each of which moves disclosure on its own.
 
@@ -201,7 +201,7 @@ The placebo distributions are centred on zero and their extremes fall well short
 
 ## 7. Spillovers: the law travels with the firm {#spillovers-the-law-travels-with-the-firm}
 
-Within-firm differencing removes spillovers by construction. If a firm exposed to a mandate somewhere changes its posting policy everywhere, that change is differenced away — which means the designs above are if anything conservative, and that the policy-relevant question has to be asked separately.
+Within-firm differencing removes spillovers by construction. If a firm exposed to a mandate somewhere changes its posting policy everywhere, that change is differenced away, which means the designs above are if anything conservative, and that the policy-relevant question has to be asked separately.
 
 Restrict attention to postings in no-law states only. Compare firms that also post into at least one mandate state against firms that do not, matching on state × industry × firm-size cells so the comparison is not simply national firms against local ones.
 
@@ -235,14 +235,14 @@ Several ordinances are frequently listed as city posting mandates and are not. P
 [figure: Philadelphia against the rest of Pennsylvania, neither of which has a posting mandate. The
 structured measure behaves correctly and shows nothing; the broad measure manufactures an effect.] Figure 18: Philadelphia against the rest of Pennsylvania, neither of which has a posting mandate. The structured measure behaves correctly and shows nothing; the broad measure manufactures an effect.
 
-The spurious estimate is roughly two-fifths the size of the genuine within-firm one — large enough to be mistaken for a real effect by anyone who had not checked. This is not an argument against the broad measure, which is validated and which the structured measure cannot replace. It is an argument against assigning treatment at city level in this corpus, where a large city differs from its own state in industry and firm composition far more than it differs in law.
+The spurious estimate is roughly two-fifths the size of the genuine within-firm one, large enough to be mistaken for a real effect by anyone who had not checked. This is not an argument against the broad measure, which is validated and which the structured measure cannot replace. It is an argument against assigning treatment at city level in this corpus, where a large city differs from its own state in industry and firm composition far more than it differs in law.
 
 ## 9. Limitations {#limitations}
 
-- **These are posted advertisements.** No hire is observed, no wage is paid, and no worker appears in the data. Nothing here speaks to whether posted ranges match realised pay, or to the wage effects of transparency, which is the question most of the literature — [Cullen and Pakzad-Hurson
+- **These are posted advertisements.** No hire is observed, no wage is paid, and no worker appears in the data. Nothing here speaks to whether posted ranges match realised pay, or to the wage effects of transparency, which is the question most of the literature ([Cullen and Pakzad-Hurson
 (2023)](https://onlinelibrary.wiley.com/doi/abs/10.3982/ECTA19788), [Mas
 (2017)](https://www.journals.uchicago.edu/doi/abs/10.1086/693137), [Arnold, Quach and Taska
-(2025)](https://www.nber.org/papers/w34480) — is actually about.
+(2025)](https://www.nber.org/papers/w34480)) is actually about.
 - **Cross-section, not event study.** All twelve mandates predate the first snapshot (Figure 1). The estimates are differences in the *level* of disclosure under two regimes at one moment, and they inherit whatever selection puts a firm in one state rather than another. The within-firm, within-title and within-metro designs narrow that selection considerably; they do not eliminate it.
 - **Every level is a lower bound.** The text measure recovers 58.4 % of ranges known to exist, so disclosure is understated throughout and the gaps are attenuated toward zero.
 - **Coverage is shaped by the crawler.** The corpus is what Bright Data’s discovery configuration reached, and that configuration became markedly more targeted across the window. Nothing here is nationally representative, and no month-over-month magnitude should be read from it.
@@ -255,7 +255,7 @@ The headline number in a compliance study of a posting mandate is a measurement 
 
 Conditional on measuring the right thing, the association is large and hard to dislodge. It survives being confined to one employer, one job title, one commuting zone and one firm-size class, and no random assignment of twelve placebo states comes near it. It also extends past the border: firms exposed to a mandate anywhere disclose substantially more where no mandate applies, which means the reach of these statutes is understated by designs that look only inside the states that passed them.
 
-What the corpus cannot do is turn any of this into a causal estimate, because every mandate was already in force when collection began. The pipeline for that estimate now exists and has been validated on the full corpus — the extractor, the statutory coding, the within-group estimator, the metro crosswalk. What is missing is time. Continued monthly collection converts each estimate above from a difference in levels into an event study on the same firms with the same instrument, and would do so for any state that adopts a mandate inside that window. That is a recommendation about collection rather than about analysis, and it is the most useful thing this exercise produced.
+What the corpus cannot do is turn any of this into a causal estimate, because every mandate was already in force when collection began. The pipeline for that estimate now exists and has been validated on the full corpus: the extractor, the statutory coding, the within-group estimator, the metro crosswalk. What is missing is time. Continued monthly collection converts each estimate above from a difference in levels into an event study on the same firms with the same instrument, and would do so for any state that adopts a mandate inside that window. That is a recommendation about collection rather than about analysis, and it is the most useful thing this exercise produced.
 
 The measurement lesson generalises beyond this policy. On any corpus of this kind, a platform’s structured fields record which employers used the platform’s features, and the text records what those employers were willing to say. Those are not the same variable, and only one of them is the object a disclosure law addresses.
 

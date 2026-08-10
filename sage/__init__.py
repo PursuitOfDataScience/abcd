@@ -13,6 +13,7 @@ index.
 """
 
 __all__ = [
+    "cite",
     "config",
     "context",
     "corpus",

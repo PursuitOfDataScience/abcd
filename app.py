@@ -18,6 +18,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from sage import (
+    cite,
     config,
     context,
     engine,
@@ -369,27 +370,58 @@ def related_sections(sources: list[dict], limit: int = 3) -> list[dict]:
             break
         page = f"{chunk.source}/{chunk.path}"
         if page in pages and chunk.id not in cited and chunk.heading:
-            out.append({"label": chunk.heading, "url": chunk.url})
+            out.append({"label": chunk.heading, "url": cite.url_for(chunk)})
     return out
+
+
+def _page_of(url: str) -> str:
+    """A URL reduced to the page it names, so two links to it compare equal."""
+    return url.split("#", 1)[0].split("?", 1)[0].rstrip("/")
+
+
+def cited_href(source: dict) -> str:
+    """A source's link, carrying enough for the page to show where the citation is.
+
+    Built at render time from the chunk rather than stored on the message: the
+    quote is derived from a corpus this app already holds, and a URL saved into
+    session state months of conversation ago would be one the highlighter had
+    since learned to read differently.
+    """
+    chunk = CORPUS.chunk(source.get("id", ""))
+    return cite.with_citation(source["url"], cite.quote_of(chunk) if chunk else "")
+
+
+def _chip(url: str, label: str, kind: str = "") -> str:
+    """One source chip.
+
+    A citation to the article the reader already has open behind the panel is not
+    a link to somewhere else. Opening a second tab on the page you are looking at
+    is a worse answer to "where is this?" than scrolling to it. Those chips are
+    marked, and `static/app.js` turns a click on one into a `sage:cite` message to
+    the website, which scrolls the article behind the panel to the section and
+    tints it. Everything else stays an ordinary link, opening in a new tab so the
+    conversation is not navigated away from.
+    """
+    here = bool(CONTEXT_URL) and _page_of(url) == _page_of(CONTEXT_URL)
+    classes = "source-chip source-chip--here" if here else "source-chip"
+    tail = f'<span class="source-kind">{html.escape(kind)}</span>' if kind else ""
+    return (
+        f'<a class="{classes}" href="{html.escape(url, quote=True)}" '
+        f'target="_blank" rel="noopener noreferrer">{html.escape(label)}{tail}</a>'
+    )
 
 
 def render_sources(sources: list[dict], related: list[dict]) -> None:
     if not sources:
         return
     chips = "".join(
-        f'<a class="source-chip" href="{html.escape(source["url"], quote=True)}" '
-        f'target="_blank" rel="noopener noreferrer">{html.escape(source["label"])}'
-        f'<span class="source-kind">{html.escape(source["source"])}</span></a>'
+        _chip(cited_href(source), source["label"], source["source"])
         for source in sources
     )
     strip = f'<div class="sources"><span class="sources-label">Sources</span>{chips}</div>'
 
     if related:
-        more = "".join(
-            f'<a class="source-chip" href="{html.escape(item["url"], quote=True)}" '
-            f'target="_blank" rel="noopener noreferrer">{html.escape(item["label"])}</a>'
-            for item in related
-        )
+        more = "".join(_chip(item["url"], item["label"]) for item in related)
         strip += (
             f'<div class="sources"><span class="sources-label">Related</span>{more}</div>'
         )
@@ -469,18 +501,6 @@ def show_status(slot, text: str) -> None:
     slot.empty()
     with slot.container(), st.chat_message("assistant"):
         st.markdown(status_html(text), unsafe_allow_html=True)
-
-
-def clearing(stream, slot):
-    """Yield deltas, dropping the status placeholder as soon as text arrives."""
-    cleared = False
-    for delta in stream:
-        if not cleared:
-            slot.empty()
-            cleared = True
-        yield delta
-    if not cleared:
-        slot.empty()
 
 
 def ask_from_url() -> None:
@@ -873,17 +893,25 @@ if st.session_state.processing:
         ):
             if event.kind == engine.STATUS:
                 show_status(status, event.text)
-            elif event.kind == engine.STREAM:
-                with answer.container(), st.chat_message("assistant"):
-                    st.write_stream(clearing(event.deltas, status))
-            elif event.kind == engine.RESET:
-                answer.empty()
             elif event.kind == engine.ANSWER:
                 answered = event.data
 
         status.empty()
-        # Re-render once with links resolved, so a raw `docs/...md` target never flashes.
-        answer.empty()
+        # Drawn once, finished, with its links already resolved, and drawn here
+        # rather than left to the rerun below so the panel is not empty for the
+        # width of a script run.
+        #
+        # Nothing is painted before this point. The engine no longer hands out
+        # partial text (see its module docstring), which is what stops the model's
+        # "Let me search the articles…" appearing in this bubble and being wiped by
+        # the next status line. The rerun that follows redraws exactly what is drawn
+        # here, from the same text through the same `fix_links`, so the handover
+        # between the two is invisible.
+        if answered and answered["text"]:
+            with answer.container(), st.chat_message("assistant"):
+                st.markdown(links.fix_links(answered["text"], CORPUS))
+        else:
+            answer.empty()
         st.session_state.messages.append(
             {
                 "role": "assistant",
