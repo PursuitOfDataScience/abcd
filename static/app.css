@@ -202,34 +202,39 @@
  * one, and there is nothing in it to reach. */
 header[data-testid="stHeader"] { display: none !important; }
 
-/* The host's own furniture: "Built with Streamlit 🎈" and the "Fullscreen" button
- * that appears on hover. `?embed=true` is supposed to drop the first and does not
- * on Community Cloud, which re-adds its badge outside the app's own footer.
+/* Streamlit's own per-element chrome: the toolbar that appears on hover over a
+ * chart, dataframe or image, and the status widget in the corner.
  *
- * Deliberately over-specified. This is the one place the stylesheet has to name
- * things it cannot see from here — the app is embedded cross-origin, so the site
- * cannot reach in and remove them, and Streamlit is not installable in the
- * environment this is written in. A single `data-testid` would be a rule that
- * stops working silently on the next release, so every plausible shape of each
- * control is listed: the current test id, the hashed-class form (matched on the
- * stable substring rather than the hash), and the one thing that cannot change
- * without the badge ceasing to be a badge — that it links to Streamlit.
+ * What is NOT here, and cannot be: the "Built with Streamlit 🎈 / Fullscreen" bar
+ * along the bottom of the panel. It is not drawn by this app. Community Cloud serves
+ * its own React application at the app's URL, which frames the real Streamlit app in
+ * a second iframe — so the nesting is site → Cloud wrapper → app, and this stylesheet
+ * is injected into the innermost document. The bar belongs to the middle one. CSS
+ * does not cross a document boundary, so no selector written here can ever reach it,
+ * however specific.
  *
- * The failure mode if a selector goes stale is visible rather than dangerous: the
- * badge reappears and gets another line here. */
-[data-testid="stAppViewerBadge"],
+ * Eight selectors used to sit here trying: stAppViewerBadge, viewerBadge,
+ * _viewerBadge, _profileContainer, stDecoration, StyledFullScreenButton, and links to
+ * streamlit.io/cloud and share.streamlit.io. Not one of those strings exists anywhere
+ * in Streamlit 1.54's frontend bundle — `grep -ril "built with"` over the whole
+ * package returns nothing — so they were dead against both the app and the wrapper.
+ * The comment they carried had the diagnosis backwards: it said Community Cloud
+ * "re-adds its badge outside the app's own footer", when the badge was never inside
+ * the app at all.
+ *
+ * `embed=true` is already doing everything it can. The nine valid `embed_options`
+ * values are show_toolbar, show_padding, disable_scrolling, light_theme, dark_theme,
+ * true, hide_loading_screen, show_loading_screen_v1, show_loading_screen_v2 — the
+ * chrome ones are opt-IN, and none of them hides a badge. Removing that bar means
+ * either hosting the app somewhere that serves Streamlit directly, or clipping the
+ * strip from the website side, where the page owns the <iframe> element.
+ *
+ * The two ids below are the ones that verifiably exist in 1.54; stElementToolbar is
+ * where the per-element fullscreen button now lives, replacing the test id and the
+ * button[title] forms that were written for an older release. */
 [data-testid="stStatusWidget"],
-[data-testid="stDecoration"],
-[class*="viewerBadge"],
-[class*="_viewerBadge"],
-[class*="_profileContainer"],
-a[href*="streamlit.io/cloud"],
-a[href*="share.streamlit.io"],
-a[href^="https://streamlit.io"],
-[data-testid="StyledFullScreenButton"],
-[data-testid="stFullScreenFrame"] > div > button,
-button[title="View fullscreen"],
-button[title="Exit fullscreen"] { display: none !important; }
+[data-testid="stElementToolbar"],
+[data-testid="stFullScreenFrame"] > div > button { display: none !important; }
 
 /* Top padding clears Streamlit's header strip, so nothing lands in the band it
  * takes the clicks for. The previous stylesheet got this spacing by accident,

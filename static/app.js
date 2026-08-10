@@ -1066,7 +1066,7 @@
     // middle one is same-origin, so the site's message arrives on `view` and the
     // reply goes up to `view.parent` by postMessage like any cross-origin pair.
 
-    // Well past the longest thing the bubble will send (it caps a passage at 280) and
+    // Well past the longest thing the bubble will send (it caps a passage at 600) and
     // short enough that a hostile framer cannot paste a book into the composer.
     var ASK_LIMIT = 2000;
     // Two budgets, because they measure different things and sharing one counter got
@@ -1161,6 +1161,9 @@
         // passage with no way to tell anyone.
         if (box.value) passage = box.value.replace(/\s+$/, '') + ' ' + passage;
         setFieldValue(box, passage);
+        // Recorded, so a passage posted later replaces this one instead of stacking
+        // onto it.
+        view.__sagePlaced = passage;
         caretToEnd(box);
     }
 
@@ -1196,34 +1199,38 @@
 
         var box = composer();
 
-        // Wall clock, and the only thing that ends a delivery that is merely waiting.
-        if (Date.now() > pending.until) {
-            // Whatever was typed goes back out with it. Left behind, an abandoned
-            // passage sits in the box and is silently prefixed to whatever the reader
-            // types next — the exact hazard the note below is about.
-            if (box && box.value === pending.text) setFieldValue(box, '');
-            view.__sagePending = null;
-            view.__sageAsked = pending.id;
-            reply(pending.id, 'sage:asked', false);
-            return;
-        }
-
-        // Sent, or so it was claimed. Streamlit empties the composer on submit, so
-        // this is the difference between "pressed" and "sent" — and reporting the
-        // press is how a control that does nothing gets reported as working.
+        // Confirmation FIRST, ahead of the deadline. A press that landed on the last
+        // pass before the clock ran out was being reported as a failure.
         //
-        // A missing box is not evidence of either. It means the chat input is between
-        // mounts, which happens on any rerun; reading it as success reported questions
-        // as delivered that had not been.
+        // Streamlit empties the composer on submit, so this is the difference between
+        // "pressed" and "sent" — and reporting the press is how a control that does
+        // nothing gets reported as working. A missing box is evidence of neither: it
+        // means the chat input is between mounts, which happens on any rerun.
         if (pending.sent) {
             if (!box) return;
             if (box.value !== pending.text) {
                 view.__sagePending = null;
                 view.__sageAsked = pending.id;
+                view.__sagePlaced = '';
                 reply(pending.id, 'sage:asked', true);
                 return;
             }
             pending.sent = false;   // it did not take; fall through and try again
+        }
+
+        // Wall clock, and the only thing that ends a delivery that is merely waiting.
+        if (Date.now() > pending.until) {
+            // Whatever was typed goes back out with it. Left behind, an abandoned
+            // passage sits in the box and is silently prefixed to whatever the reader
+            // types next — the exact hazard the note below is about.
+            if (box && box.value === pending.text) {
+                setFieldValue(box, '');
+                view.__sagePlaced = '';
+            }
+            view.__sagePending = null;
+            view.__sageAsked = pending.id;
+            reply(pending.id, 'sage:asked', false);
+            return;
         }
 
         // Never mid-answer — for something being *sent*. `blockSendWhileProcessing`
@@ -1237,15 +1244,47 @@
         // Step one. Typing is its own pass: the input event has to be seen by React
         // before the control it enables can be pressed.
         if (box.value !== pending.text) {
-            // Never over the reader's own words. `draftFromUrl` has always had this
-            // rule and the posted path did not, so a passage selected while a half-
-            // typed question sat in the box replaced it — and then took the caret.
-            // The passage is added after what they wrote instead; nothing is lost.
-            if (box.value && !pending.typed) {
-                if (!pending.draft) return;   // a question would be sent mangled
-                pending.text = box.value.replace(/\s+$/, '') + ' ' + pending.text;
+            if (pending.typed) {
+                // Already placed, and the box no longer holds it. That is the reader
+                // editing what we put there. Retyping over them is what "never over
+                // the reader's own words" was supposed to prevent, and doing it on
+                // every pass is a three-minute loop that reverts each keystroke.
+                if (pending.draft) {
+                    view.__sagePending = null;
+                    view.__sageAsked = pending.id;
+                    reply(pending.id, 'sage:asked', true);
+                } else {
+                    view.__sagePending = null;
+                    view.__sageAsked = pending.id;
+                    reply(pending.id, 'sage:asked', false);
+                }
+                return;
+            }
+
+            // Never over the reader's own words — but "their words" excludes a passage
+            // this script placed a moment ago. Appending blindly meant selecting a
+            // second passage stacked it onto the first, so the composer accumulated
+            // `About this passage from "A": … — About this passage from "B": … — ` and
+            // both went to the model as one question. Ours is replaced; anything the
+            // reader added after it is kept, and stays after the new passage, which is
+            // where the trailing dash puts the caret anyway.
+            var mine = view.__sagePlaced || '';
+            var here = box.value;
+            if (here && mine && here.indexOf(mine) === 0) {
+                pending.text = pending.text + here.slice(mine.length);
+            } else if (here) {
+                // A question cannot be sent with someone else's half-sentence on it.
+                if (!pending.draft) {
+                    view.__sagePending = null;
+                    view.__sageAsked = pending.id;
+                    reply(pending.id, 'sage:asked', false);
+                    return;
+                }
+                pending.text = here.replace(/\s+$/, '') + ' ' + pending.text;
             }
             pending.typed = true;
+            pending.typedAt = Date.now();
+            view.__sagePlaced = pending.text;
             setFieldValue(box, pending.text);
             schedule();
             return;
@@ -1257,6 +1296,9 @@
         if (pending.draft) {
             caretToEnd(box);
             view.__sagePending = null;
+            // `__sagePlaced` deliberately survives: it is how the next passage knows
+            // which part of the box is its predecessor rather than the reader's.
+
             view.__sageAsked = pending.id;
             reply(pending.id, 'sage:asked', true);
             return;
@@ -1272,17 +1314,21 @@
         // this grace period was already spent by the time a question that had waited
         // out an answer got here, so Enter fired on the first check — into a composer
         // React had not re-rendered around yet, where it does nothing.
+        // Both gates are wall-clock, not per-pass. Counting passes put the real
+        // deadline at half a second: the dead-wait branch called `schedule()` itself,
+        // so the delivery drove its own passes at frame rate and burnt all six presses
+        // before a slow re-render had finished — the same mistake as the budget this
+        // replaced, moved one level down.
         var send = sendButton();
-        if (!ready(send)) {
-            pending.dead = (pending.dead || 0) + 1;
-            if (pending.dead < 4) {
-                schedule();
-                return;   // still waking, and waiting is not an attempt
-            }
-        }
+        if (!ready(send) && Date.now() - (pending.typedAt || 0) < 600) return;
+        if (pending.lastPress && Date.now() - pending.lastPress < 250) return;
+        pending.lastPress = Date.now();
         pending.presses += 1;
         if (pending.presses > ASK_PRESSES) {
-            if (box.value === pending.text) setFieldValue(box, '');
+            if (box.value === pending.text) {
+                setFieldValue(box, '');
+                view.__sagePlaced = '';
+            }
             view.__sagePending = null;
             view.__sageAsked = pending.id;
             reply(pending.id, 'sage:asked', false);
@@ -1293,7 +1339,6 @@
         } else {
             pressEnter(box);
         }
-        pending.dead = 0;
         pending.sent = true;
         schedule();
     }
@@ -1337,8 +1382,9 @@
                 return;
             }
             view.__sagePending = {
-                text: text, id: data.id, sent: false, presses: 0, dead: 0,
-                typed: false, draft: data.mode === 'draft',
+                text: text, id: data.id, sent: false, presses: 0,
+                typed: false, typedAt: 0, lastPress: 0,
+                draft: data.mode === 'draft',
                 until: Date.now() + ASK_PATIENCE,
             };
             // Receipt first and immediately. It is the only thing the site puts a
