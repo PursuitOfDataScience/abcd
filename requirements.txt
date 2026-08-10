@@ -5,9 +5,22 @@
 #
 # `anthropic` used to be listed here and was never imported. `pymupdf` was the
 # reverse: imported as `fitz` but never declared, so the fast PDF path never ran.
-# >=1.42 because `st.container(key=…)` — and with it the `.st-key-*` classes the
-# whole stylesheet hooks onto — is not in 1.40/1.41. On those the app raises
+# >=1.42 because `st.container(key=…)`, and with it the `.st-key-*` classes the
+# whole stylesheet hooks onto, is not in 1.40/1.41. On those the app raises
 # TypeError on import rather than merely rendering unstyled.
+#
+# THIS FILE IS ALSO THE RESTART SWITCH, which is worth knowing before it costs an
+# hour again. Community Cloud reacts to a push by pulling the files and *rerunning
+# the script* in the process it already has. Streamlit re-executes app.py on a
+# rerun but does not reimport anything already in `sys.modules`, so a change
+# confined to `sage/` is pulled, is present on disk, and does not run: the app
+# keeps answering out of the modules it imported at the previous commit. The build
+# stamp does not save you either, because `_build()` reads BUILD off disk on every
+# rerun and therefore reports the new SHA from the old process.
+#
+# The host only restarts the process when it has to rebuild the environment, and it
+# decides that by looking at this file. So a `sage/` change needs either a Reboot
+# from the app's ⋮ menu or one byte changed here. Editing a comment is enough.
 streamlit>=1.42,<2
 mistralai>=1.0,<2
 # OpenCode Zen and any other OpenAI-compatible endpoint are called over plain
@@ -15,8 +28,8 @@ mistralai>=1.0,<2
 # imports it directly.
 httpx>=0.27
 # pypdf and pymupdf are NOT here. They serve the file-upload path only, which is
-# off unless a deployment sets SAGE_UPLOADS, and PyMuPDF alone is a 24.6 MB wheel —
-# larger than Streamlit — downloaded and installed on every cold start of a host
+# off unless a deployment sets SAGE_UPLOADS, and PyMuPDF alone is a 24.6 MB wheel,
+# larger than Streamlit, downloaded and installed on every cold start of a host
 # that sleeps. `sage/files.py` imports both on demand and degrades to a sentence if
 # they are absent. To enable uploads:
 #
