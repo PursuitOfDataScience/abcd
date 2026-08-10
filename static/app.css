@@ -142,52 +142,10 @@
     --transition: 0.24s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-@media (prefers-color-scheme: dark) {
-    :root {
-        /* A maroon gradient on a near-black page reads at 1.73:1. These lighter
-         * tints keep the brand while staying legible. */
-        --gradient-text-start: #f2b0b6;
-        --gradient-text-end: #e08a94;
-        --brand-text: #f0a8ac;
-        --brand-line: #e08a94;
-
-        --text-primary: #e5e7eb;
-        --text-secondary: #b6bcc7;
-        --text-muted: #9ca3af;      /* 7.44:1 on #0e1117 */
-        --icon: #b6bcc7;
-
-        --card-bg: linear-gradient(145deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%);
-        --card-bg-hover: linear-gradient(145deg, rgba(128, 0, 0, 0.32) 0%, rgba(165, 18, 42, 0.32) 100%);
-        --card-border: rgba(255, 255, 255, 0.12);
-        --card-border-hover: rgba(196, 90, 100, 0.7);
-
-        --chip-bg: rgba(255, 255, 255, 0.06);
-        --chip-border: rgba(255, 255, 255, 0.14);
-
-        --control-bg: rgba(255, 255, 255, 0.08);
-        --control-bg-hover: rgba(255, 255, 255, 0.16);
-        --control-border: rgba(255, 255, 255, 0.18);
-
-        --input-border: #374151;
-        /* Streamlit painted this one white on a near-black page. Matched to the input
-         * box's own surface so the panel reads as part of the composer it belongs to. */
-        --popover-bg: #1c1d24;
-        --popover-border: rgba(255, 255, 255, 0.16);
-        --code-inline-bg: rgba(240, 168, 172, 0.14);
-        --code-inline-fg: #f0a8ac;
-
-        --ok: #4ade80;
-        --ok-bg: rgba(34, 197, 94, 0.16);
-        --danger: #fca5a5;
-        --danger-bg: rgba(239, 68, 68, 0.14);
-        --danger-border: rgba(239, 68, 68, 0.3);
-
-        --shadow-md: 0 4px 15px rgba(0, 0, 0, 0.35);
-        /* Lifted for a near-black page, where a 4.5% tint of anything is invisible. */
-        --answer-bg: rgba(120, 170, 255, 0.07);
-        --answer-rule: rgba(120, 170, 255, 0.38);
-    }
-}
+/* The dark palette used to be here, behind `@media (prefers-color-scheme: dark)`.
+ * It is `static/app-dark.css` now, and app.py decides when it applies: the website
+ * passes its own light/dark state in `embed_options`, and that is a better authority
+ * than the operating system for a panel docked inside a page. See that file. */
 
 /* ===== BASE RESETS ===== */
 .stDeployButton, #MainMenu, footer { display: none !important; }

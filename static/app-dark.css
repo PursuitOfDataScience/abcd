@@ -1,0 +1,61 @@
+/* The dark palette, and nothing else.
+
+   It is a file of its own because the decision about when dark applies is not this
+   stylesheet's to make. It used to sit behind `@media (prefers-color-scheme: dark)`,
+   which asks the operating system, and the operating system is the wrong authority:
+   this app is a panel inside a website that has its own light/dark switch, and a
+   reader who throws that switch expects the panel to follow it rather than their
+   laptop.
+
+   Leaving it to the browser also produced a panel that disagreed with itself. Inside
+   a site set to dark, Safari rendered the app light and Chrome rendered it dark: the
+   same reader, the same machine, a white rectangle in one browser and the right thing
+   in the other. The website already says which way it is set, in `embed_options`, and
+   app.py applies this file on the strength of that, wrapping it in the media query
+   only when nobody has said.
+
+   One rule, so a caller can emit it as it stands or wrap it. */
+:root {
+    /* A maroon gradient on a near-black page reads at 1.73:1. These lighter
+     * tints keep the brand while staying legible. */
+    --gradient-text-start: #f2b0b6;
+    --gradient-text-end: #e08a94;
+    --brand-text: #f0a8ac;
+    --brand-line: #e08a94;
+
+    --text-primary: #e5e7eb;
+    --text-secondary: #b6bcc7;
+    --text-muted: #9ca3af;      /* 7.45:1 on the page's #0d1117 */
+    --icon: #b6bcc7;
+
+    --card-bg: linear-gradient(145deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%);
+    --card-bg-hover: linear-gradient(145deg, rgba(128, 0, 0, 0.32) 0%, rgba(165, 18, 42, 0.32) 100%);
+    --card-border: rgba(255, 255, 255, 0.12);
+    --card-border-hover: rgba(196, 90, 100, 0.7);
+
+    --chip-bg: rgba(255, 255, 255, 0.06);
+    --chip-border: rgba(255, 255, 255, 0.14);
+
+    --control-bg: rgba(255, 255, 255, 0.08);
+    --control-bg-hover: rgba(255, 255, 255, 0.16);
+    --control-border: rgba(255, 255, 255, 0.18);
+
+    --input-border: #374151;
+    /* Streamlit painted this one white on a near-black page. Matched to the input
+     * box's own surface so the panel reads as part of the composer it belongs to. */
+    --popover-bg: #1c1d24;
+    --popover-border: rgba(255, 255, 255, 0.16);
+    --code-inline-bg: rgba(240, 168, 172, 0.14);
+    --code-inline-fg: #f0a8ac;
+
+    --ok: #4ade80;
+    --ok-bg: rgba(34, 197, 94, 0.16);
+    --danger: #fca5a5;
+    --danger-bg: rgba(239, 68, 68, 0.14);
+    --danger-border: rgba(239, 68, 68, 0.3);
+
+    --shadow-md: 0 4px 15px rgba(0, 0, 0, 0.35);
+    /* Lifted for a near-black page, where a 4.5% tint of anything is invisible. */
+    --answer-bg: rgba(120, 170, 255, 0.07);
+    --answer-rule: rgba(120, 170, 255, 0.38);
+}

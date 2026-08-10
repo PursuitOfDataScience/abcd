@@ -137,14 +137,113 @@ st.set_page_config(
 # --- assets ----------------------------------------------------------------
 
 
+def _stamp(name: str) -> float:
+    """A file's mtime, or 0 if it is not there.
+
+    Part of the cache key below rather than a nicety. Community Cloud answers a push
+    by pulling the files and rerunning the script in the process it already has, so a
+    cache keyed on the name alone serves the stylesheet the process read at boot for
+    as long as that process lives: the new CSS is on disk, is never read, and the fix
+    looks like it did not work. See DEPLOYING.md.
+    """
+    try:
+        return os.stat(os.path.join(STATIC, name)).st_mtime
+    except OSError:
+        return 0.0
+
+
 @st.cache_resource(show_spinner=False)
-def load_asset(name: str) -> str:
+def _read_asset(name: str, _mtime: float) -> str:
     try:
         with open(os.path.join(STATIC, name), encoding="utf-8") as handle:
             return handle.read()
     except OSError as exc:
         logger.error("Missing static asset %s: %s", name, exc)
         return ""
+
+
+def load_asset(name: str) -> str:
+    return _read_asset(name, _stamp(name))
+
+
+# --- which way the panel is set ---------------------------------------------
+#
+# The website has its own light/dark switch and passes the result in
+# `embed_options`, which is Streamlit's own parameter for it. The app used to leave
+# the question entirely to Streamlit and to `@media (prefers-color-scheme: dark)`,
+# and that produced a panel that disagreed with the page it was docked in: inside a
+# site set to dark, Safari rendered this app light and Chrome rendered it dark. Same
+# reader, same machine, a white rectangle in one browser.
+#
+# So the palette is applied from what the site said, and the canvas is painted here
+# rather than left to Streamlit's theme, which is the part Safari was not applying.
+# `auto` is what a direct visit to the app's own URL gets, and only there does the
+# operating system get a vote.
+
+# The website's own two backgrounds and body colours (`--bg-color` and
+# `--body-color` in assets/css/custom.css). Matched exactly, because the panel's
+# frame and title bar are painted in them by chat.css: any other pair puts a seam
+# down the inside of the panel.
+CANVAS = {
+    "dark": ("#0d1117", "#c3ccd6"),
+    "light": ("#ffffff", "#334155"),
+}
+
+
+def scheme() -> str:
+    """"dark", "light", or "" when the reader did not arrive from the website.
+
+    Read here rather than through `query_param` below, which reads one value: the
+    parameter is repeatable and Streamlit adds its own, so the theme can be the
+    second of three. This also runs before `query_param` is defined, because the
+    stylesheet has to be on the page before anything is drawn on it.
+    """
+    asked: list[str] = []
+    try:
+        asked = list(st.query_params.get_all("embed_options"))
+    except Exception:
+        try:
+            asked = list(
+                st.experimental_get_query_params().get("embed_options", [])
+            )
+        except Exception:
+            asked = []
+    if "dark_theme" in asked:
+        return "dark"
+    if "light_theme" in asked:
+        return "light"
+    return ""
+
+
+def scheme_css(mode: str) -> str:
+    """The palette for `mode`, plus the canvas Streamlit may not have painted."""
+    palette = load_asset("app-dark.css")
+    if mode == "dark":
+        block = palette
+    elif mode == "light":
+        block = ""      # app.css is light where it stands
+    else:
+        block = f"@media (prefers-color-scheme: dark) {{\n{palette}\n}}"
+    if mode not in CANVAS:
+        return block
+    background, text = CANVAS[mode]
+    return (
+        f"{block}\n"
+        # `color-scheme` as well as the colours: it is what makes the browser draw
+        # the scrollbar, the caret and any native control on the right side of the
+        # divide. Without it a dark panel gets a light scrollbar down its edge.
+        #
+        # `:root` and not `html`, which is the same element and loses. app.css says
+        # `:root { color-scheme: light dark }`, meaning "this app can do either",
+        # and a type selector cannot outrank a pseudo-class however late it comes.
+        # Measured: the canvas went dark and the colour scheme stayed `light dark`.
+        f":root, body, .stApp, [data-testid=\"stAppViewContainer\"], "
+        f"[data-testid=\"stMain\"], [data-testid=\"stBottom\"] {{\n"
+        f"    background: {background} !important;\n"
+        f"    color: {text};\n"
+        f"    color-scheme: {mode};\n"
+        f"}}\n"
+    )
 
 
 # The profile's brand comes after the stylesheet so its custom properties win.
@@ -161,9 +260,11 @@ def load_asset(name: str) -> str:
 # Opened by `<style>` the block is CommonMark type 1 instead, which ends only at the
 # closing tag, so the stylesheet cannot be reinterpreted however many blank lines and
 # asterisks it contains. tests/test_app_smoke.py::TestStylesheet holds the invariant.
+SCHEME = scheme()
 st.markdown(
     f"<style>/* build {_build()} */\n"
-    f"{load_asset('app.css')}\n{PROFILE.brand_css}</style>",
+    f"{load_asset('app.css')}\n{scheme_css(SCHEME)}\n"
+    f"{PROFILE.brand_css_for(SCHEME)}</style>",
     unsafe_allow_html=True,
 )
 components.html(f"<script>{load_asset('app.js')}</script>", height=0)

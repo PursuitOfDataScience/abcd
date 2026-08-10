@@ -113,13 +113,15 @@ class Profile:
     def paths(self) -> dict[str, str]:
         return {item.name: item.path for item in self.sources}
 
-    @property
-    def brand_css(self) -> str:
-        """Overrides for `static/app.css`, both schemes, or "" for none.
+    def brand_css_for(self, scheme: str = "") -> str:
+        """Overrides for `static/app.css`, for the scheme the panel is set to.
 
-        The dark block is emitted with the same `prefers-color-scheme` query the
-        stylesheet uses, and after it, so it wins for the properties it names and
-        leaves the rest of the dark palette alone.
+        `scheme` is "dark", "light", or "" when nobody has said, which is the only
+        case where the operating system gets a vote. It has to be the same authority
+        the rest of the palette answers to: the brand's dark half names half a dozen
+        of the same properties, so a brand applied on one rule and a palette applied
+        on another means unreadable text whenever the two disagree. They disagreed on
+        Safari, which is where this was found.
         """
         if not self.brand and not self.brand_dark:
             return ""
@@ -130,9 +132,15 @@ class Profile:
         parts = []
         if self.brand:
             parts.append(f":root {{ {block(self.brand)} }}")
-        if self.brand_dark:
+        if self.brand_dark and scheme != "light":
+            rule = f":root {{ {block(self.brand_dark)} }}"
             parts.append(
-                "@media (prefers-color-scheme: dark) { :root { "
-                f"{block(self.brand_dark)} }} }}"
+                rule if scheme == "dark"
+                else f"@media (prefers-color-scheme: dark) {{ {rule} }}"
             )
         return "\n".join(parts)
+
+    @property
+    def brand_css(self) -> str:
+        """The scheme-agnostic form, for callers that cannot know: the OS decides."""
+        return self.brand_css_for("")
