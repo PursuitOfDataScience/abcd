@@ -8,21 +8,17 @@
 # Streamlit paints this onto the one control the stylesheet does not reach: the send
 # arrow in the corner of the composer. Nothing else in the panel takes its colour
 # from here, because `sage/profiles/site.py` layers a palette of its own over
-# app.css and that palette is blue.
+# app.css, so this is the value that keeps the arrow in the same family as the box
+# around it. It is the site's own link colour (`--link-color` in the website's
+# custom.css).
 #
-# So this is deliberately the one thing that is not blue. It was changed to the
-# site's link colour (#2563eb) on the argument that a maroon arrow in a blue box
-# looks like a leftover from the deployment this was forked from, and the owner has
-# since said plainly that the red is the colour they want. Their site, their arrow.
-# The requirement is a deep red rather than a light one: a pale tint of it "is very
-# pink", which is what a lighter dark-mode variant of this would be, so there is no
-# second value here for dark and there should not be one. White on #800000 is
-# 8.9:1, so one value carries both schemes.
+# It was #800000, the maroon of the deployment this was forked from, which put a
+# maroon arrow in a blue box in the corner of a blue site.
 #
 # Changing this needs the app's *process* restarted, not merely rerun: Streamlit
 # parses config.toml once at start-up. See the note in requirements.txt for the
 # switch that forces one.
-primaryColor = "#800000"
+primaryColor = "#2563eb"
 font = "sans serif"
 
 [server]

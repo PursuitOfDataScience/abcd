@@ -23,10 +23,11 @@
 # from the app's ⋮ menu or one byte changed here. Editing a comment is enough.
 #
 # `.streamlit/config.toml` is the other file with this property, for a different
-# reason: Streamlit parses it once, at start-up, so a colour changed there is on
-# disk and inert until the process goes round again. The send arrow takes its
-# colour from `primaryColor`, and that is why it did not change on the push that
-# changed it.
+# reason: Streamlit parses it once, at start-up. A theme colour changed there is
+# pulled, sits on disk and does not apply, which looks exactly like a colour that
+# was edited in the wrong place. Measured: the send arrow kept its old value across
+# a push that changed `primaryColor`, and took the new one the moment this file
+# forced a rebuild.
 streamlit>=1.42,<2
 mistralai>=1.0,<2
 # OpenCode Zen and any other OpenAI-compatible endpoint are called over plain
