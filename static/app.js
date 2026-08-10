@@ -1110,6 +1110,7 @@
             var placed = composer();
             if (!placed || placed.value !== pending.text) {
                 view.__sagePending = null;
+                view.__sageAsked = pending.id;
                 reply(pending.id, 'sage:asked', true);
                 return;
             }
@@ -1119,6 +1120,7 @@
         pending.tries -= 1;
         if (pending.tries < 0) {
             view.__sagePending = null;
+            view.__sageAsked = pending.id;
             reply(pending.id, 'sage:asked', false);
             return;
         }
@@ -1153,11 +1155,27 @@
             if (!data || data.source !== 'sage-site' || data.type !== 'sage:ask') return;
             var text = typeof data.text === 'string' ? data.text.slice(0, ASK_LIMIT).trim() : '';
             if (!text) return;
-            // A second question while one is still being placed replaces it. Two
-            // passages queued behind a generating answer would arrive as two
+            // The site re-offers a question until it is acknowledged, because its
+            // first attempt may land before this listener exists. Once one is
+            // finished with, later copies of it are answered and dropped: without
+            // this an offer still in flight when the receipt was sent would be asked
+            // a second time, which is the one way this can be worse than not working.
+            if (view.__sageAsked === data.id) {
+                reply(data.id, 'sage:ack', true);
+                return;
+            }
+            // A second, different question while one is still being placed replaces
+            // it. Two passages queued behind a generating answer would arrive as two
             // questions the reader no longer remembers asking.
             var stale = view.__sagePending;
             if (stale && stale.id !== data.id) reply(stale.id, 'sage:asked', false);
+            if (stale && stale.id === data.id) {
+                // Already in hand and still being placed. Re-acknowledge — the
+                // receipt is what the site is waiting on — but do not restart the
+                // attempt counter or undo a click that has been made.
+                reply(data.id, 'sage:ack', true);
+                return;
+            }
             view.__sagePending = { text: text, id: data.id, tries: ASK_TRIES, sent: false };
             // Receipt first and immediately. It is the only thing the site puts a
             // deadline on; everything after it may take as long as it takes.
