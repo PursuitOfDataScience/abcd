@@ -180,13 +180,20 @@ def load_asset(name: str) -> str:
 # `auto` is what a direct visit to the app's own URL gets, and only there does the
 # operating system get a vote.
 
-# The website's own two backgrounds and body colours (`--bg-color` and
-# `--body-color` in assets/css/custom.css). Matched exactly, because the panel's
-# frame and title bar are painted in them by chat.css: any other pair puts a seam
-# down the inside of the panel.
+# The website's own colours: `--bg-color`, `--body-color` and `--secondary-bg-color`
+# in assets/css/custom.css. Matched exactly, because the panel's frame and title bar
+# are painted in them by chat.css, and any other values put a seam down the inside
+# of the panel.
+#
+# The third is the composer's surface, and it is here for the same reason the first
+# two are. app.css styles that box, its border, its radius and its focus ring, but
+# never its background: it left that to Streamlit's theme, and Streamlit's theme is
+# exactly the thing that was not being applied. Measured on the deployed app with
+# the palette in force: a 240,242,246 strip across an otherwise dark panel, which is
+# Streamlit's light secondary background showing through everything.
 CANVAS = {
-    "dark": ("#0d1117", "#c3ccd6"),
-    "light": ("#ffffff", "#334155"),
+    "dark": ("#0d1117", "#c3ccd6", "#161b22"),
+    "light": ("#ffffff", "#334155", "#f3f4f6"),
 }
 
 
@@ -226,9 +233,13 @@ def scheme_css(mode: str) -> str:
         block = f"@media (prefers-color-scheme: dark) {{\n{palette}\n}}"
     if mode not in CANVAS:
         return block
-    background, text = CANVAS[mode]
+    background, text, surface = CANVAS[mode]
     return (
         f"{block}\n"
+        # The composer's box. Streamlit paints this one on a generated class name
+        # that changes between versions, so it is reached through the test id above
+        # it, which does not.
+        f'[data-testid="stChatInput"] > div {{ background: {surface} !important; }}\n'
         # `color-scheme` as well as the colours: it is what makes the browser draw
         # the scrollbar, the caret and any native control on the right side of the
         # divide. Without it a dark panel gets a light scrollbar down its edge.
