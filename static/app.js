@@ -1086,10 +1086,78 @@
             || doc.querySelector('[data-testid="stChatInput"] textarea');
     }
 
+    // Named, not "the first button in there". Streamlit 1.54's chat input has test
+    // ids for six of them — submit, file upload, microphone, delete, approve, cancel
+    // — plus the paperclip this script injects, and which ones are rendered depends
+    // on props and version. `querySelector('button')` picks whichever happens to be
+    // first in the DOM, which on the day one of the others appears is a control that
+    // uploads a file or starts recording instead of sending the question.
     function sendButton() {
         var container = doc.querySelector('[data-testid="stChatInput"]');
-        // Not the paperclip, which is injected into the same container.
-        return container && container.querySelector('button:not(#paperclip-btn)');
+        if (!container) return null;
+        return container.querySelector('[data-testid="stChatInputSubmitButton"]')
+            // Older and newer shapes: the last button in the row is the send one at
+            // every version this has been looked at, and the paperclip is first.
+            || (function () {
+                var all = container.querySelectorAll('button:not(#paperclip-btn)');
+                return all.length ? all[all.length - 1] : null;
+            })();
+    }
+
+    // The submit button is `disabled` whenever the box is empty — Streamlit computes
+    // it as `!hasValue || …` — and a click on a disabled button is silently dropped.
+    // React only clears that flag on the render *after* the input event, so a value
+    // set and a click issued in the same frame is a click into nothing. This is what
+    // makes delivery a per-pass state machine rather than two lines in a row.
+    function ready(button) {
+        return !!button && !button.disabled
+            && button.getAttribute('aria-disabled') !== 'true';
+    }
+
+    function caretToEnd(box) {
+        try { box.focus({ preventScroll: true }); } catch (err) { box.focus(); }
+        try { box.setSelectionRange(box.value.length, box.value.length); }
+        catch (err) { /* not a field that carries a caret */ }
+    }
+
+    // The first passage a reader selects arrives in the frame's URL, because the
+    // frame is being built for it and there is nothing yet to post to. `draft` rather
+    // than `q`, so app.py leaves it alone and it lands in the composer instead of
+    // being asked — see the note on `frameUrl` in the site's chat.js.
+    //
+    // Once per page load, never over the reader's own typing. The parameter stays in
+    // the URL for the life of the frame, so without the guard every rerun would put
+    // the passage back and a reader mid-sentence would be typing into a box that
+    // keeps resetting.
+    function draftFromUrl() {
+        if (view.__sageUrlDraft) return;
+        var text;
+        try {
+            text = new view.URLSearchParams(view.location.search).get('draft') || '';
+        } catch (err) {
+            view.__sageUrlDraft = true;
+            return;
+        }
+        if (!text) { view.__sageUrlDraft = true; return; }
+        var box = composer();
+        if (!box) return;                       // not rendered yet; next pass
+        view.__sageUrlDraft = true;
+        if (box.value) return;                  // the reader got there first
+        setFieldValue(box, text.slice(0, ASK_LIMIT));
+        caretToEnd(box);
+    }
+
+    // Second route to the same submit, for when the button will not come alive.
+    // Streamlit sends on a bare Enter in the composer, and `blockSendWhileProcessing`
+    // only intercepts that while a turn is generating, which `drainAsk` already
+    // refuses to act during.
+    function pressEnter(box) {
+        ['keydown', 'keypress', 'keyup'].forEach(function (kind) {
+            box.dispatchEvent(new view.KeyboardEvent(kind, {
+                key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
+                bubbles: true, cancelable: true,
+            }));
+        });
     }
 
     // Delivery is a state machine on `view`, stepped by sync(), rather than a
@@ -1099,22 +1167,29 @@
     // obvious way is therefore killed by exactly the thing it is waiting for. sync()
     // is re-entered after each re-render, and the pending question is held on `view`,
     // which is the page around this frame and outlives all of it.
+    // One step per pass, and each step is checked on the pass after it rather than
+    // assumed. Typing and sending cannot happen in the same frame, because the button
+    // that sends is disabled until React has re-rendered around the text — so the
+    // steps are: put the text in, wait for the control to come alive, press it, then
+    // confirm the box emptied. Anything else is a click into a disabled button, which
+    // is exactly as silent as doing nothing.
     function drainAsk() {
         var pending = view.__sagePending;
         if (!pending) return;
 
+        var box = composer();
+
+        // Sent, or so it was claimed. Streamlit empties the composer on submit, so
+        // this is the difference between "pressed" and "sent" — and reporting the
+        // press is how a control that does nothing gets reported as working.
         if (pending.sent) {
-            // Streamlit empties the composer on submit, so this is the difference
-            // between "clicked" and "sent" — and reporting the click as success is
-            // how a control that does nothing gets reported as working.
-            var placed = composer();
-            if (!placed || placed.value !== pending.text) {
+            if (!box || box.value !== pending.text) {
                 view.__sagePending = null;
                 view.__sageAsked = pending.id;
                 reply(pending.id, 'sage:asked', true);
                 return;
             }
-            pending.sent = false;   // the click did not take; fall through and retry
+            pending.sent = false;   // it did not take; fall through and try again
         }
 
         pending.tries -= 1;
@@ -1125,21 +1200,47 @@
             return;
         }
 
-        var box = composer();
-        var send = sendButton();
-        // Never mid-answer: `blockSendWhileProcessing` makes the button unclickable
-        // then on purpose, and a question placed now would sit in the box and be sent
-        // by whatever the reader typed next.
-        if (!box || !send || isProcessing()) return;
+        // Never mid-answer — for something being *sent*. `blockSendWhileProcessing`
+        // kills the button then on purpose, and text placed now would sit in the box
+        // and go out attached to whatever the reader typed next. A draft is only
+        // being typed, which is allowed while an answer is still arriving.
+        if (!box || (isProcessing() && !pending.draft)) return;
 
-        setFieldValue(box, pending.text);
-        pending.sent = true;
-        // One frame for React to see the input event, or the button is still disabled
-        // from an empty box at the moment it is clicked.
-        view.requestAnimationFrame(function () {
-            try { send.click(); } catch (err) { /* replaced mid-rerun */ }
+        // Step one. Typing is its own pass: the input event has to be seen by React
+        // before the control it enables can be pressed.
+        if (box.value !== pending.text) {
+            setFieldValue(box, pending.text);
             schedule();
-        });
+            return;
+        }
+
+        // A draft is finished the moment the text is in the box. The caret goes after
+        // it, because the text is an opening — the reader types the question they
+        // actually have and presses send themselves.
+        if (pending.draft) {
+            caretToEnd(box);
+            view.__sagePending = null;
+            view.__sageAsked = pending.id;
+            reply(pending.id, 'sage:asked', true);
+            return;
+        }
+
+        // Step two. The text is in and this pass is a later frame, so the button has
+        // had its re-render. If it is still dead, come back next pass — until enough
+        // of them have gone by that it is not going to wake, and Enter is tried
+        // instead. Streamlit sends on a bare Enter, so this is a second route to the
+        // same submit rather than a workaround for it.
+        var send = sendButton();
+        if (ready(send)) {
+            try { send.click(); } catch (err) { /* replaced mid-rerun */ }
+        } else if (pending.tries < ASK_TRIES - 4) {
+            pressEnter(box);
+        } else {
+            schedule();
+            return;
+        }
+        pending.sent = true;
+        schedule();
     }
 
     // Re-registered on every pass, the way `addPromptHistory` is: this closure is
@@ -1153,8 +1254,12 @@
         var onMessage = function (event) {
             var data = event.data;
             if (!data || data.source !== 'sage-site' || data.type !== 'sage:ask') return;
-            var text = typeof data.text === 'string' ? data.text.slice(0, ASK_LIMIT).trim() : '';
-            if (!text) return;
+            if (typeof data.text !== 'string') return;
+            // Leading whitespace only. A draft ends `— ` deliberately: that trailing
+            // space is where the caret lands and where the reader starts typing, and
+            // trimming both ends put the caret hard against the dash.
+            var text = data.text.slice(0, ASK_LIMIT).replace(/^\s+/, '');
+            if (!text.trim()) return;
             // The site re-offers a question until it is acknowledged, because its
             // first attempt may land before this listener exists. Once one is
             // finished with, later copies of it are answered and dropped: without
@@ -1176,7 +1281,10 @@
                 reply(data.id, 'sage:ack', true);
                 return;
             }
-            view.__sagePending = { text: text, id: data.id, tries: ASK_TRIES, sent: false };
+            view.__sagePending = {
+                text: text, id: data.id, tries: ASK_TRIES, sent: false,
+                draft: data.mode === 'draft',
+            };
             // Receipt first and immediately. It is the only thing the site puts a
             // deadline on; everything after it may take as long as it takes.
             reply(data.id, 'sage:ack', true);
@@ -1202,6 +1310,7 @@
         // neither half can be skipped by the other, and so neither can cost the pass
         // its layout.
         try { acceptQuestions(); } catch (err) { /* keep the pass going */ }
+        try { draftFromUrl(); } catch (err) { /* keep the pass going */ }
         try { drainAsk(); } catch (err) { /* keep the pass going */ }
 
         // Measurement FIRST. It used to run after the injectors, all of them inside
