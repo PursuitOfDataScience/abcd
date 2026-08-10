@@ -248,8 +248,24 @@ def scheme_css(mode: str) -> str:
         # `:root { color-scheme: light dark }`, meaning "this app can do either",
         # and a type selector cannot outrank a pseudo-class however late it comes.
         # Measured: the canvas went dark and the colour scheme stayed `light dark`.
+        #
+        # `[data-testid="stBottom"] > div` is the strip the composer sits on, and it
+        # is a separate element from the one above it. Streamlit's bottom dock is two
+        # nested divs: a sticky outer one carrying the test id, which paints nothing,
+        # and an inner one that fills itself with the background of *Streamlit's own*
+        # theme and carries no test id at all, only a generated class that changes
+        # between releases. So painting the test id alone left the inner one white,
+        # which is what a reader of a dark page saw: a hundred pixels of white across
+        # the foot of the panel, with a correctly dark question box floating on it.
+        #
+        # Measured against the deployed app in a headless browser, with the site set
+        # to dark and the browser to light, which is the arrangement the screenshots
+        # came from: the outer div answered rgb(13, 17, 23) and the inner one
+        # rgb(255, 255, 255). Reached as a child rather than by its class, because
+        # the class is `e1td4qo63` today and something else next release.
         f":root, body, .stApp, [data-testid=\"stAppViewContainer\"], "
-        f"[data-testid=\"stMain\"], [data-testid=\"stBottom\"] {{\n"
+        f"[data-testid=\"stMain\"], [data-testid=\"stBottom\"], "
+        f"[data-testid=\"stBottom\"] > div {{\n"
         f"    background: {background} !important;\n"
         f"    color: {text};\n"
         f"    color-scheme: {mode};\n"

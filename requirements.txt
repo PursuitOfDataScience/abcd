@@ -21,6 +21,12 @@
 # The host only restarts the process when it has to rebuild the environment, and it
 # decides that by looking at this file. So a `sage/` change needs either a Reboot
 # from the app's ⋮ menu or one byte changed here. Editing a comment is enough.
+#
+# `.streamlit/config.toml` is the other file with this property, for a different
+# reason: Streamlit parses it once, at start-up, so a colour changed there is on
+# disk and inert until the process goes round again. The send arrow takes its
+# colour from `primaryColor`, and that is why it did not change on the push that
+# changed it.
 streamlit>=1.42,<2
 mistralai>=1.0,<2
 # OpenCode Zen and any other OpenAI-compatible endpoint are called over plain
