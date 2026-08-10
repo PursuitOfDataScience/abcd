@@ -193,26 +193,26 @@ CANVAS = {
 def scheme() -> str:
     """"dark", "light", or "" when the reader did not arrive from the website.
 
-    Read here rather than through `query_param` below, which reads one value: the
-    parameter is repeatable and Streamlit adds its own, so the theme can be the
-    second of three. This also runs before `query_param` is defined, because the
-    stylesheet has to be on the page before anything is drawn on it.
+    `theme`, and not the `embed_options=dark_theme` beside it in the same URL.
+    Streamlit reserves `embed` and `embed_options`, consumes them in the frontend
+    and does not put them in `st.query_params`, so an app reading them sees nothing
+    however carefully the site sets them. Measured, after an afternoon of assuming
+    otherwise: `?embed=true&embed_options=dark_theme&theme=dark&ctx_url=x` arrives
+    here as `{'theme': ['dark'], 'ctx_url': ['x']}`.
+
+    Defined above `query_param` and not using it, because the stylesheet this feeds
+    has to be on the page before anything is drawn on it.
     """
-    asked: list[str] = []
+    asked = ""
     try:
-        asked = list(st.query_params.get_all("embed_options"))
+        asked = str(st.query_params.get("theme", "") or "").strip().lower()
     except Exception:
         try:
-            asked = list(
-                st.experimental_get_query_params().get("embed_options", [])
-            )
+            values = st.experimental_get_query_params().get("theme", [])
+            asked = str(values[0] if values else "").strip().lower()
         except Exception:
-            asked = []
-    if "dark_theme" in asked:
-        return "dark"
-    if "light_theme" in asked:
-        return "light"
-    return ""
+            asked = ""
+    return asked if asked in CANVAS else ""
 
 
 def scheme_css(mode: str) -> str:
