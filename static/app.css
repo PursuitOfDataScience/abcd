@@ -50,6 +50,11 @@
     --popover-border: #e2e8f0;
     --code-inline-bg: rgba(128, 0, 0, 0.1);
     --code-inline-fg: #8a1020;
+    /* The fenced block, which is a surface rather than a mark on the page and so is
+     * neutral in both schemes rather than brand-tinted like the inline pair above.
+     * Both values are Streamlit's own, for the theme that matches the panel. */
+    --code-block-bg: #f8f9fb;
+    --code-block-fg: #31333f;
 
     /* Darker than the #15803d it was. Over its own 12%-green background on white
      * that read 4.39:1 — under AA — which nothing here measured until the attachment
@@ -863,6 +868,42 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
     width: auto !important;
 }
 
+/* The answer's own colour, which Streamlit sets, and sets wrong.
+ *
+ * `[data-testid="stChatMessageContent"]` is painted rgb(49, 51, 63), the body colour
+ * of Streamlit's *light* theme, and every paragraph, heading, list and table beneath
+ * it inherits from there. It is the only element in the conversation carrying a
+ * colour of its own: `.stChatMessage` above it takes the canvas colour app.py sets,
+ * and the question's bubble sets its own. So the answer was the one thing in the
+ * panel that never followed the website's light/dark switch.
+ *
+ * On the dark canvas that is 1.51:1 against the page: a paragraph a reader can see
+ * is there and cannot read. Measured in Chromium against the real Streamlit DOM with
+ * the site's own parameters on the frame URL, which is the only place it is visible;
+ * `tools/render_check.py` renders a replica that has no Streamlit stylesheet in it,
+ * and passed this for as long as it existed.
+ *
+ * Passing `embed_options=dark_theme` does not move it. That parameter drives
+ * Streamlit's own theme resolver, this colour was emitted whatever the resolver
+ * decided (measured: identical in all four combinations of site scheme and browser
+ * scheme), and the panel answers to the website's switch rather than to that
+ * resolver in any case.
+ *
+ * The note on `--answer-bg` above assumed this text was already `--text-primary`,
+ * "so nothing here can drop below contrast". That assumption was the bug: nothing
+ * had ever set it, and inheritance stops at this element.
+ *
+ * Links are the same failure and matter as much, because an answer here is mostly
+ * citations: Streamlit's rgb(0, 84, 163) reads 2.52:1 on the dark page.
+ * `--brand-text` is the scheme's text-safe brand blue, #1d4ed8 on white and #bfd7fe
+ * on the dark page, and is what the rest of the panel already uses for brand text. */
+.stChatMessage [data-testid="stChatMessageContent"] {
+    color: var(--text-primary) !important;
+}
+.stChatMessage [data-testid="stChatMessageContent"] a {
+    color: var(--brand-text) !important;
+}
+
 .stChatMessage p { max-width: 100% !important; overflow-wrap: break-word !important; margin-top: 0 !important; }
 .stChatMessage > div { margin-top: 0 !important; }
 .stChatMessage > div:nth-child(2) { max-width: 100% !important; flex: 1 !important; }
@@ -885,6 +926,31 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
     padding: 2px 6px !important;
     border-radius: 4px !important;
     font-size: 0.88em !important;
+}
+
+/* The fenced code block, for the same reason and from the same cause as the answer's
+ * prose above: Streamlit paints `pre` from its own theme, so inside a dark panel it
+ * came out a near-white slab, rgb(248, 249, 251) with rgb(49, 51, 63) on it. Not
+ * unreadable, which is why it outlived the reported bug, but wrong in the way this
+ * repository has called a bug before: a white rectangle on a near-black page
+ * contrasts beautifully and looks awful.
+ *
+ * The values are Streamlit's own, read off an app running its dark theme rather than
+ * chosen here, so a code block in the panel looks like what it looked like when
+ * Streamlit's theme was still the authority for it.
+ *
+ * The token spans keep their colours: Streamlit emits the same Prism palette in both
+ * themes, and on this surface it measures 4.57:1 for a comment, 5.57:1 for an
+ * operator and 5.59:1 for a string, so there is nothing here to restate. */
+.stChatMessage [data-testid="stChatMessageContent"] pre,
+.stChatMessage [data-testid="stChatMessageContent"] pre code {
+    background: var(--code-block-bg) !important;
+    color: var(--code-block-fg) !important;
+}
+/* `code` above is transparent in both themes, and painting it would put a second
+ * rectangle inside the first one. */
+.stChatMessage [data-testid="stChatMessageContent"] pre code {
+    background: transparent !important;
 }
 
 .stChatMessage table { font-size: 0.86rem; }
