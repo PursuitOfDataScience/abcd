@@ -45,11 +45,25 @@ def _env_list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
 # --- providers -------------------------------------------------------------
 # Which provider/model a fresh session starts on, as "provider:model-id".
 #
-# The free model, by the owner's instruction. It was `mistral:mistral-small-latest`,
+# A free model, by the owner's instruction. It was `mistral:mistral-small-latest`,
 # which is paid and, on this deployment, out of credit: every turn opened with a
-# request that could only fail, waited out its backoff, and then failed over to this
+# request that could only fail, waited out its backoff, and then failed over to a free
 # model anyway. Starting here removes a wasted round trip from every question and
 # spends nothing.
+#
+# `nemotron-3.5-lightning-free`, by the owner's instruction of 2026-08-12, replacing
+# `deepseek-v4-flash-free` on the same authority. The measurements agree with the
+# instruction: on the day it was set, `deepseek-v4-flash-free` answered 429
+# `FreeUsageLimitError` to every request this key made, so opening there cost a refusal
+# on every question, while this one answered a real question in 7.5s after a 22.9s
+# search round.
+#
+# It is a reasoning model and keeps its reasoning where it belongs. Round one puts the
+# thinking in `delta.reasoning` with `content` empty and emits the tool call; round two
+# returns 325 characters of answer in `content` and stops. That is worth recording
+# because the sibling `nemotron-3-ultra-free` looks identical and never fills `content`
+# at all, which is a different model and a 166-second dead end. Do not read across from
+# one to the other.
 #
 # This names the *first* candidate and not the only one. `engine.run_conversation`
 # still walks the rest of the ladder behind it, so a details panel reporting a failure
@@ -59,7 +73,7 @@ def _env_list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
 # serves it, because Zen's free lineup rotates without notice and offering a model
 # that has been withdrawn is a button that returns a 404. When it is gone the first
 # model Zen does serve is used instead.
-DEFAULT_MODEL = os.getenv("SAGE_DEFAULT_MODEL", "opencode:deepseek-v4-flash-free")
+DEFAULT_MODEL = os.getenv("SAGE_DEFAULT_MODEL", "opencode:nemotron-3.5-lightning-free")
 
 MISTRAL_MODELS = _env_list(
     "SAGE_MISTRAL_MODELS",
@@ -71,18 +85,38 @@ MISTRAL_MODELS = _env_list(
 # discovered from GET /models at runtime; this is only the fallback, since a free
 # tier's lineup changes without notice.
 OPENCODE_BASE_URL = os.getenv("OPENCODE_BASE_URL", "https://opencode.ai/zen/v1")
+# This is two things at once, and the second is the one that bites: it is the fallback
+# list when discovery fails, and it is the *preference order* applied to whatever
+# discovery does return (`OpenAICompatProvider._order`). So it decides which model a
+# failover lands on, and a name in the wrong place here is a reader's wait.
+#
+# Checked against the endpoint on 2026-08-12. `north-mini-code-free` and
+# `longcat-2.0-free` are no longer served and are gone; `nemotron-3.5-lightning-free`
+# is new and leads the list, which is also `DEFAULT_MODEL`: the two have to agree, or a
+# failover walks back to a model the walk had already started on.
+#
+# `hy3-free` sits high because it is the one that carried this deployment while the
+# three above it were rate limited, answering with seven cited sources in 44s.
+#
+# `nemotron-3-ultra-free` is last on evidence rather than on taste. It is a reasoning
+# model that streams its thinking in `delta.reasoning` and never fills `delta.content`
+# at all, and it responds to a search result by searching again: six rounds, thirty
+# seconds each, no answer at the end of any of them. It stays on the list because the
+# lineup rotates and a model that is useless today may be re-pointed at something else
+# tomorrow, but nothing should reach it before the models that do answer. Note that it
+# is not the same model as `nemotron-3.5-lightning-free` above and does not behave like
+# it, which is easy to miss from the names.
 OPENCODE_MODELS = _env_list(
     "SAGE_OPENCODE_MODELS",
     (
+        "nemotron-3.5-lightning-free",
+        "hy3-free",
         "deepseek-v4-flash-free",
         "big-pickle",
         "mimo-v2.5-free",
-        "nemotron-3-ultra-free",
-        "north-mini-code-free",
-        "hy3-free",
         "laguna-s-2.1-free",
         "ling-3.0-tiny-free",
-        "longcat-2.0-free",
+        "nemotron-3-ultra-free",
     ),
 )
 

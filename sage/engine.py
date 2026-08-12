@@ -60,11 +60,14 @@ ANSWER = "answer"
 # it wants to search or answer.
 THINKING = "Thinking"
 
-# The model asked for tool round after tool round and never settled. Better than an
-# empty bubble, and it names the one action that helps.
-UNFINISHED = (
-    "I wasn't able to finish looking that up. Please try rephrasing your question."
-)
+# The model asked for tool round after tool round and never settled, or answered with
+# nothing at all. Better than an empty bubble, and it names the one action that helps.
+#
+# It now lives in `llm` because it is the message for the `empty` failure kind rather
+# than a placeholder this module writes: a turn that produces no answer raises, so the
+# ladder can try a model that will produce one, and a reader sees these words only after
+# every candidate has been asked. The name is kept because it reads better here.
+UNFINISHED = llm.UNFINISHED
 
 
 @dataclass(frozen=True)
@@ -143,6 +146,26 @@ def _round_text(turn) -> str:
     return "".join(turn.deltas())
 
 
+# What one model may spend before the ladder stops waiting for it, checked between tool
+# rounds.
+#
+# `nemotron-3-ultra-free` is why this exists. It is a reasoning model that streams its
+# thinking in `delta.reasoning` and leaves `delta.content` empty, and it responds to a
+# search result by searching again. Every round costs thirty seconds and none of them
+# produces a word of answer, so it walked the full six-round cap: a measured 166 seconds
+# of a reader's time, ending in "please try rephrasing your question", with three models
+# that answer the same question in under thirty sitting untried behind it. The round cap
+# is a count, and this failure is a clock.
+#
+# Forty-five seconds is above every honest turn measured on this lineup and below two of
+# that model's rounds, so it lands on the case it is for. Checked between rounds rather
+# than mid-stream, deliberately: a check inside the stream would have to decide whether
+# a half-written answer is worth keeping, and this way a model that is actually writing
+# one is never interrupted. A single round that hangs is bounded by the HTTP read
+# timeout in `providers`, not by this.
+MODEL_BUDGET = 45.0
+
+
 def run_turn(
     *,
     index: Index,
@@ -153,6 +176,7 @@ def run_turn(
     tools: bool = True,
     max_rounds: int | None = None,
     patient: bool = True,
+    budget: float | None = MODEL_BUDGET,
 ) -> Iterator[Event]:
     """One answer, on one model. Raises `llm.AssistantError` rather than yielding it.
 
@@ -166,6 +190,9 @@ def run_turn(
     that was going to answer the question. The mid-conversation calls stay patient
     whatever this says, because by then the tool rounds have been paid for and
     starting over loses them.
+
+    `budget` is how many seconds of tool rounds this model gets before the turn is
+    abandoned for the next candidate; `None` removes the limit. See `MODEL_BUDGET`.
     """
     rounds = config.MAX_TOOL_ROUNDS if max_rounds is None else max_rounds
     corpus = index.corpus
@@ -174,6 +201,7 @@ def run_turn(
     runner = ToolRunner(index)
     messages = list(messages)
     final_text = ""
+    started = time.monotonic()
 
     yield Event(STATUS, THINKING)
 
@@ -208,6 +236,17 @@ def run_turn(
         if round_number == rounds:
             logger.warning("Tool-round limit reached without a final answer")
             break
+        # The other way a model can fail to converge, and the one the round cap does
+        # not catch: rounds that are cheap in number and expensive in seconds. Checked
+        # here, between rounds, so a model part-way through writing an answer is never
+        # cut off. See MODEL_BUDGET.
+        spent = time.monotonic() - started
+        if budget is not None and spent >= budget:
+            logger.warning(
+                "%s spent %.1fs over %d round(s) without answering; abandoning it for "
+                "the next candidate", model.key, spent, round_number + 1,
+            )
+            break
 
         yield Event(STATUS, describe(turn.tool_calls, corpus))
         messages.append(turn.as_message())
@@ -217,27 +256,41 @@ def run_turn(
             )
         turn = llm.start(provider, model.id, messages, schemas)
 
-    # An empty bubble is not an answer, and neither is the last thing a model said
-    # on its way to a tool call. Both end here.
-    #
-    # Logged, and logged apart from the round-limit warning above, because the two
-    # look identical from the outside and have nothing to do with each other. A
-    # model that returns no text and asks for no tool on its first round has not run
-    # out of anything: it answered with nothing at all, which is what a spent key
-    # looks like on a provider that reports exhaustion as an empty 200 rather than as
-    # an error. Without this line the deployment's logs say nothing and the only
-    # symptom is a reader being told to rephrase a perfectly good question.
-    if not final_text.strip():
-        logger.warning(
-            "Empty answer from %s after %d round(s), %d search(es): "
-            "the model returned no text and asked for no tool",
-            model.key, round_number + 1, len(runner.queries),
-        )
-        final_text = UNFINISHED
-
     sources = _sources(runner)
     if runner.queries and not sources:
         feedback.record_miss(runner.queries, question)
+
+    # An empty bubble is not an answer, and neither is the last thing a model said on
+    # its way to a tool call. Both end here, and both now *raise* rather than being
+    # dressed up as an answer.
+    #
+    # This is the bug that survived fixing the ladder, and it was the worse of the two.
+    # `nemotron-3-ultra-free` accepts the request, calls `search_docs`, reads the
+    # result, and then streams a 200 carrying no content at all. Yielding a placeholder
+    # for that told `run_conversation` the turn had succeeded, so the walk stopped
+    # there: measured against the live endpoint, a reader waited 166 seconds to be told
+    # to rephrase a perfectly good question while three models that answer it in under
+    # thirty were sitting untried behind the one that said nothing.
+    #
+    # A 200 with nothing in it is a refusal wearing a success code, so it is reported as
+    # one. The reader still gets these exact words, but only once the whole ladder has
+    # been asked, which is the one situation they are true in.
+    #
+    # The three ways of getting here are worth telling apart in a log, because from the
+    # outside they are the same silence and they have nothing to do with each other:
+    # a model that ran out of rounds, one that ran out of seconds, and one that simply
+    # returned no text on a round where it asked for no tool. Only the third is the
+    # spent-key-reported-as-an-empty-200 case, and the warnings above already name the
+    # other two, so this says which shape it was rather than asserting the third.
+    if not final_text.strip():
+        logger.warning(
+            "No answer from %s after %d round(s) and %d search(es) (%s). Treating it "
+            "as a refusal and moving on to the next candidate.",
+            model.key, round_number + 1, len(runner.queries),
+            "asked for no tool and returned no text" if not turn.tool_calls
+            else "still calling tools when it ran out of rounds or seconds",
+        )
+        raise llm.AssistantError("empty")
 
     yield Event(
         ANSWER,
@@ -258,6 +311,7 @@ REASONS = {
     "auth": "its key was rejected",
     "rate_limit": "rate limited",
     "unavailable": "temporarily unavailable",
+    "empty": "returned an empty answer",
 }
 
 # The failures a *different provider* actually fixes, which is the only reason to
@@ -281,23 +335,116 @@ REASONS = {
 # endpoint would hide it behind a second bill rather than report it. A timeout stays
 # out for a related reason, since the likeliest cause is this end, and the retry buys
 # one more connect timeout for the reader to wait through.
-FAILS_OVER = frozenset({"quota", "auth", "rate_limit", "unavailable"})
+#
+# `empty` joins them for the reason set out where it is raised: a 200 carrying no answer
+# is a refusal, and the model that gave it is the last one worth asking again.
+FAILS_OVER = frozenset({"quota", "auth", "rate_limit", "unavailable", "empty"})
 
-# Of those, the ones that write off the rest of the provider rather than just this
-# model. `quota` and `auth` are properties of the key, so they are true of everything
-# behind it.
+# Of those, the ones that write off the rest of the provider rather than only this
+# model. `quota` and `auth` are properties of the *key*, so they are true of everything
+# behind it and asking the siblings is a round trip each to learn one fact.
 #
-# `rate_limit` is here on evidence, and it was not before. The argument for walking a
-# rate-limited provider's other models was that a 429 describes one request; the
-# argument against is what the deployment actually does. Observed twice: Zen answers
-# 429 for `deepseek-v4-flash-free`, then for `big-pickle`, then for `mimo-v2.5-free`,
-# so the cap is on the account and not the model. Walking it cost eight further
-# requests to an endpoint asking for fewer, made the next reader's limit worse, and
-# never once produced an answer.
+# `rate_limit` is NOT one of them. It was for two commits, on an inference from three
+# consecutive 429s that the cap was on the account, and that inference is now measured
+# and wrong. Against the live endpoint on one key within one minute:
 #
-# `unavailable` stays out: a 5xx really can be one model's backend, and a sibling is a
-# reasonable thing to try when a provider is up but one of its models is not.
-PRUNES_PROVIDER = frozenset({"quota", "auth", "rate_limit"})
+#     deepseek-v4-flash-free   429 FreeUsageLimitError
+#     big-pickle               429 FreeUsageLimitError
+#     mimo-v2.5-free           429 FreeUsageLimitError
+#     hy3-free                 200, answered
+#     nemotron-3-ultra-free    200, answered
+#     laguna-s-2.1-free        200, answered
+#
+# Three refused and three answered, so Zen's free limit is per model. The three that
+# refuse happen to be the three this deployment tries first, which is why one cap looked
+# like a dead account. Pruning on it produced exactly the failure this was reported as:
+# `tried 2 of 11 configured`, eight candidates discarded unasked, and a reader told to
+# come back later while models that would have answered sat behind the ones that did not.
+#
+# Nor is it a property of the request. Bare, non-streaming, without `max_tokens`, and
+# under the CLI's own user-agent all return the same 429 in 0.2s, so there is nothing to
+# fix in what is sent: the key is capped on those models and the answer is to ask a
+# different one.
+PRUNES_PROVIDER = frozenset({"quota", "auth"})
+
+# The kinds that say something about the *endpoint*, and so are a reason to prefer a
+# different one over the sibling that comes next in the ladder's own order.
+#
+# Only `unavailable`. A 5xx is the endpoint reporting on itself, and while its other
+# models are still worth something, a provider that has just failed is the worse bet.
+#
+# `rate_limit` used to reach this by falling through the `else` it was written under,
+# which quietly undid half of taking it out of `PRUNES_PROVIDER`: the sibling stopped
+# being written off but still lost its place to whatever provider came next. The
+# measurement says the siblings are independent, so a 429 is not evidence about the
+# endpoint and there is nothing to reorder for. The ladder's order is the owner's
+# preference, and the next model in it is the next one to ask.
+#
+# `empty` likewise. A model that answers with nothing has told you about that model.
+REORDERS_PROVIDER = frozenset({"unavailable"})
+
+# How long a refusal is believed, in seconds, before that model is asked again.
+#
+# The ladder had no memory at all, so every reader re-derived the same three 429s from
+# scratch, and the model that never answers was re-elected on every question. A walk that
+# has to rediscover the state of the world each time is not a fallback, it is a queue of
+# known-bad calls with a working one somewhere behind it.
+#
+# The numbers are sized to the failure, not to a policy. A free-tier window is minutes,
+# so a 429 is believed for two of them and no longer. A spent balance and a rejected key
+# do not recover on their own, so those are held for fifteen minutes, which is short
+# enough that topping up an account shows up in the panel without a restart. `empty` is
+# held for ten because it is a property of the model rather than of the moment: a model
+# that reasons in a field the API does not return as content will do it again in ten
+# minutes. `unavailable` gets sixty seconds, because a flapping backend is the one
+# failure here that really is about the moment.
+#
+# Deliberately advisory. `_ready` falls back to the full ladder when everything in it is
+# cooling, because a stale note about a model is worth less than one more attempt at an
+# answer, and the note is a guess about someone else's rate limiter either way.
+COOLOFF = {
+    "rate_limit": 120.0,
+    "quota": 900.0,
+    "auth": 900.0,
+    "empty": 600.0,
+    "unavailable": 60.0,
+}
+
+# model key -> the monotonic time it becomes worth trying again. Process-wide on purpose:
+# Streamlit re-executes the script on every interaction but keeps the process, so this is
+# what one reader's failed walk can tell the next reader's.
+_cooling: dict[str, float] = {}
+
+
+def _cool(model_key: str, kind: str, now: float) -> None:
+    ttl = COOLOFF.get(kind)
+    if ttl:
+        _cooling[model_key] = now + ttl
+
+
+def _ready(models: list, now: float) -> list:
+    """The candidates not known to be refusing, or all of them if that is none.
+
+    Expired notes are dropped as they are read rather than swept, which keeps the
+    dictionary the size of the ladder without a second pass over it.
+
+    Written to survive two readers at once, because that is the normal case: Streamlit
+    runs every session in its own thread over this one process-wide dictionary. The
+    iteration is over a snapshot so the dictionary can be written while it is walked,
+    and the removal is a `pop` rather than a `del` so the loser of a race to expire the
+    same note gets `None` instead of a `KeyError` out of a panel that was answering a
+    question.
+    """
+    for key, until in list(_cooling.items()):
+        if until <= now:
+            _cooling.pop(key, None)
+    warm = [model for model in models if model.key not in _cooling]
+    return warm or list(models)
+
+
+def forget_refusals() -> None:
+    """Drop every cool-off note. For tests, and for a caller that wants a clean walk."""
+    _cooling.clear()
 
 # What bounds the walk, and why it is a clock rather than a count.
 #
@@ -313,18 +460,48 @@ PRUNES_PROVIDER = frozenset({"quota", "auth", "rate_limit"})
 # that are refusing is a few seconds, and the honest limit is therefore the reader's
 # waiting time and not the number of names in a list.
 #
-# Twenty seconds is the budget, measured from the first attempt and checked before
-# starting another. In every ordinary failure the queue empties first and the reader is
-# told to come back later only once that is true. The budget binds when something is
-# slow rather than absent, which is the case where continuing would leave a reader
-# watching a status line with nothing behind it.
+# The budget is measured from the first attempt and checked before starting another. In
+# every ordinary failure the queue empties first and the reader is told to come back
+# later only once that is true. It binds when something is slow rather than absent, which
+# is the case where continuing would leave a reader watching a status line with nothing
+# behind it.
+#
+# It was twenty seconds, and twenty seconds was measured against models that refuse in
+# milliseconds rather than models that answer. The free lineup does not answer in
+# milliseconds: `hy3-free` took 31.7s to say "OK." and `nemotron-3-ultra-free` 30s to
+# open a search. A budget below the time a working model takes to reply does not bound
+# the reader's wait, it just guarantees that the second slow candidate is never reached,
+# which on the measured lineup is the difference between an answer and a tea break.
 #
 # MAX_MODELS_TRIED stays as a runaway backstop, at a number the present ladder cannot
 # reach, because the free lineup is discovered at runtime and nothing here controls how
 # long it gets. Either limit stopping early is logged at WARNING with the count left
 # untried, so a bounded walk cannot quietly read as an exhausted one.
-LADDER_BUDGET = 20.0
+LADDER_BUDGET = 75.0
 MAX_MODELS_TRIED = 24
+
+def _unfinished(model_key: str, switched_from: tuple[str, str] | None) -> Event:
+    """What a reader gets when the walk ends on a model that answered with nothing.
+
+    An answer event and not an exception, which is the difference between the reader
+    seeing a reply in the transcript and seeing a red card headed "Could not complete
+    that request". The endpoint worked, the model responded, and it had nothing to say:
+    that is an outcome, and telling the reader to rephrase is a reasonable thing to do
+    about it. A rate limit or a spent key is a different matter and still raises.
+
+    So `empty` fails over like a refusal and lands like an answer. The failing over is
+    the fix; the landing is what the panel has always done and is deliberately left
+    alone.
+    """
+    return Event(
+        ANSWER,
+        data={
+            "text": UNFINISHED,
+            "sources": [],
+            "model": model_key,
+            **({"switched_from": switched_from} if switched_from else {}),
+        },
+    )
 
 
 def run_conversation(
@@ -345,14 +522,33 @@ def run_conversation(
     A `notice` event is emitted before the retry, and the successful `answer` event
     carries `switched_from` so a caller can say so in the past tense once there is
     an answer to say it about.
+
+    Candidates that refused recently are skipped rather than re-asked; see `COOLOFF`.
     """
-    queue = list(models)
-    if not queue:
+    if not models:
         raise llm.AssistantError("unknown")
+
+    started = time.monotonic()
+    # What the last few walks learned, applied before the first request rather than
+    # rediscovered by making it. `_ready` returns the whole ladder when every rung is
+    # cooling, so this can only reorder the work, never remove the last chance of an
+    # answer.
+    queue = _ready(list(models), started)
+    # What this walk will not ask, taken from the queue rather than from `_cooling`.
+    # The two differ in the case that matters: when every rung is cooling `_ready`
+    # hands back the whole ladder, and reporting those as skipped would describe a full
+    # walk as a truncated one. Recorded before the walk begins, because `_cooling` gains
+    # entries as it proceeds and this names what was never asked, not what refused.
+    walking = {item.key for item in queue}
+    skipped = [item.key for item in models if item.key not in walking]
+    if skipped:
+        logger.info(
+            "Skipping %d model(s) that refused recently: %s",
+            len(skipped), ", ".join(skipped),
+        )
 
     switched_from: tuple[str, str] | None = None
     attempts = 0
-    started = time.monotonic()
     # What refused, in order. Attached to whatever is finally raised so the caller can
     # report the ladder rather than its last rung.
     tried: list[tuple[str, str]] = []
@@ -382,6 +578,14 @@ def run_conversation(
                 # buy faster, and it buys it by making two more requests to a
                 # service that has just asked for fewer.
                 patient=last_chance,
+                # The same budget for the last candidate as for the first, which is
+                # the opposite of what `patient` does and is deliberate. Patience
+                # spends a retry that might work; this spends minutes on a model
+                # that has already shown it is not converging, and the measured
+                # instance of it produced nothing at the end of 166 seconds. An
+                # unbounded last chance is how a reader waits three minutes to be
+                # told to rephrase the question.
+                budget=MODEL_BUDGET,
             ):
                 if event.kind == ANSWER and switched_from:
                     yield Event(
@@ -399,22 +603,36 @@ def run_conversation(
             exc.model = model.key
             tried.append((model.key, exc.kind))
             exc.tried = list(tried)
+            exc.skipped = list(skipped)
             if exc.kind not in FAILS_OVER:
                 raise
+            now = time.monotonic()
+            _cool(model.key, exc.kind, now)
             if exc.kind in PRUNES_PROVIDER:
                 # One refusal answers for the whole provider: a spent key is spent for
-                # every model behind it, and an account-level rate limit is too. Trying
-                # each in turn is a round trip per model to learn one fact.
+                # every model behind it. Trying each in turn is a round trip per model
+                # to learn one fact.
+                #
+                # Noted against each of them and not only against the one that spoke,
+                # so the next question does not pay the same round trip on a sibling.
+                # Without that, a three-model provider whose key is dead costs one
+                # wasted call per question until each has been asked separately.
+                for item in queue:
+                    if item.provider == model.provider:
+                        _cool(item.key, exc.kind, now)
                 queue = [item for item in queue if item.provider != model.provider]
-            else:
-                # `unavailable` only. The provider is up and one of its models is not,
-                # so its others are still worth something, but another provider is the
-                # better bet and goes first. A stable sort on "same provider?" reorders
-                # without disturbing the preference order inside either group.
+            elif exc.kind in REORDERS_PROVIDER:
+                # The provider is up and one of its models is not, so its others are
+                # still worth something, but another provider is the better bet and goes
+                # first. A stable sort on "same provider?" reorders without disturbing
+                # the preference order inside either group.
                 queue.sort(key=lambda item: item.provider == model.provider)
             if not queue:
                 # The ladder is genuinely exhausted, which is the only case the
                 # reader's "try again later" is supposed to describe.
+                if exc.kind == "empty":
+                    yield _unfinished(model.key, switched_from)
+                    return
                 raise
             spent = time.monotonic() - started
             if spent >= LADDER_BUDGET or attempts >= MAX_MODELS_TRIED:
@@ -423,6 +641,9 @@ def run_conversation(
                     "(last: %s, %s)",
                     attempts, spent, len(queue), model.key, exc.kind,
                 )
+                if exc.kind == "empty":
+                    yield _unfinished(model.key, switched_from)
+                    return
                 raise
             alternative = queue[0]
             logger.info(

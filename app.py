@@ -343,11 +343,33 @@ def get_provider(name: str):
 
 
 @st.cache_resource(show_spinner=False)
+def _list_models(name: str) -> list[providers.Model]:
+    """Raises rather than returning empty, and that is the whole point.
+
+    This used to catch the failure inside the cached function and return `[]`, which
+    cached the failure: `st.cache_resource` stores whatever comes back, so one bad
+    listing at start-up removed that provider from the ladder for the entire life of the
+    process. Nothing retried it, because as far as the cache was concerned the question
+    had been answered.
+
+    That is a provider disappearing for hours over a moment's trouble, and it is
+    indistinguishable from a missing key. A process that came up before its secrets were
+    readable would answer every question from the other provider alone and, when that
+    one was out of credit, tell every reader to come back later while a working key sat
+    beside it. `st.cache_resource` caches a return value and not an exception, so
+    letting this raise means a failure is retried on the next rerun instead.
+    """
+    return get_provider(name).models()
+
+
 def available_models(name: str) -> list[providers.Model]:
     try:
-        return get_provider(name).models()
+        return _list_models(name)
     except Exception as exc:
-        logger.warning("Could not list models for %s: %s", name, exc)
+        logger.warning(
+            "Could not list models for %s (%s). Not cached, so this is retried on the "
+            "next rerun.", name, exc,
+        )
         return []
 
 
@@ -657,7 +679,18 @@ def _ladder(exc: BaseException | None) -> str:
     if not tried:
         return ""
     chain = "; ".join(f"{key} -> {kind}" for key, kind in tried)
-    return f"tried {len(tried)} of {len(MODELS) or 1} configured: {chain}"
+    line = f"tried {len(tried)} of {len(MODELS) or 1} configured: {chain}"
+    # Which of the untried ones were skipped on purpose, and why. Without this the
+    # engine's cool-off makes a healthy walk unreadable: "tried 1 of 11" is what a
+    # deliberate skip and the old prune-the-whole-provider bug both look like, and the
+    # first needs waiting out while the second needed the fix it has now had.
+    skipped = getattr(exc, "skipped", None) or []
+    if skipped:
+        line += (
+            f"\nskipped {len(skipped)} still cooling from a recent refusal: "
+            + ", ".join(skipped)
+        )
+    return line
 
 
 def _detail(exc: BaseException | None, model_key: str = "") -> str:

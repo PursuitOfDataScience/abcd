@@ -46,11 +46,25 @@ EXHAUSTED = (
     "Please try again a little later."
 )
 
+# A model that answered, and answered with nothing. Kept here rather than in the engine
+# because it is now the message for a *failure kind* and not for a placeholder the
+# engine writes: `engine.run_turn` raises `empty` so the ladder can go on to a model
+# that will say something, and this is what the reader gets only once every one of them
+# has been asked. `engine.UNFINISHED` is still the name the rest of the code uses.
+UNFINISHED = (
+    "I wasn't able to finish looking that up. Please try rephrasing your question."
+)
+
 _MESSAGES = {
     "auth": EXHAUSTED,
     "rate_limit": EXHAUSTED,
     "quota": EXHAUSTED,
     "unavailable": EXHAUSTED,
+    # Not a transport failure, so it never comes out of `classify`. It is raised
+    # deliberately by `engine.run_turn` for a 200 that carried no answer, which is a
+    # real refusal wearing a success code and used to end the walk as if it had
+    # succeeded. See `engine.FAILS_OVER`.
+    "empty": UNFINISHED,
     "context": "This conversation got too long. Clear it and ask again.",
     "network": "Could not reach the assistant. Check the connection and retry.",
     "unknown": "Something went wrong. Please try again.",
@@ -74,6 +88,11 @@ class AssistantError(Exception):
         # and never in the queue: two different problems with two different fixes, and
         # nothing on screen or in the log told them apart.
         self.tried: list[tuple[str, str]] = []
+        # Candidates that were never asked because they refused recently enough to still
+        # be cooling. Reported next to `tried` and for the same reason: a walk that
+        # skipped six of eleven rungs looks, in a count alone, exactly like the pruning
+        # bug that skipped nine of them, and those need opposite responses.
+        self.skipped: list[str] = []
         super().__init__(_MESSAGES[self.kind])
 
     @property

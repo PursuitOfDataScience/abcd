@@ -22,6 +22,17 @@
 # decides that by looking at this file. So a `sage/` change needs either a Reboot
 # from the app's ⋮ menu or one byte changed here. Editing a comment is enough.
 #
+# All of which is true and was NOT what went wrong on 2026-08-12. Read DEPLOYING.md §5
+# before reaching for this switch, because the failure that looks identical to it is
+# one step earlier: the host does not deploy this repository at all. It deploys the
+# `abcd` export, and a fix committed here reaches nothing until `tools/export_app.py`
+# has been run and its output pushed. Three commits and a great many reboots went into
+# forcing a restart of a process that was never going to load them, because the code
+# they contained had not been published.
+#
+# So the order to check is: exported and pushed, then restarted. This file is the
+# second question and never the first.
+#
 # `.streamlit/config.toml` is the other file with this property, for a different
 # reason: Streamlit parses it once, at start-up. A theme colour changed there is
 # pulled, sits on disk and does not apply, which looks exactly like a colour that
@@ -41,4 +52,4 @@ httpx>=0.27
 # they are absent. To enable uploads:
 #
 #     pip install -r requirements.txt -r requirements-uploads.txt
-# sage modules + corpus: 27a90e629b7e77af
+# sage modules + corpus: c8f1d2978e211020
