@@ -602,8 +602,15 @@ def render_assistant(position: int, message: dict) -> None:
         render_rating(position, message)
 
 
-def _detail(exc: BaseException | None) -> str:
-    """A one-line, non-secret description of a failure for the details panel."""
+def _detail(exc: BaseException | None, model_key: str = "") -> str:
+    """A one-line, non-secret description of a failure for the details panel.
+
+    `model_key` is the model that actually raised, which after a failover is not
+    `MODEL`: that one is only what the picker settled on before the turn began.
+    Reporting the selection produced a panel that named a Mistral model above a 429
+    from Zen's endpoint, which reads as a bug in the app rather than as what it was,
+    the second provider refusing after the first had already been abandoned.
+    """
     if exc is None:
         return ""
     text = f"{type(exc).__name__}: {exc}"
@@ -612,7 +619,7 @@ def _detail(exc: BaseException | None) -> str:
     )
     if status:
         text = f"{text}  (HTTP {status})"
-    return f"{text}\nmodel={MODEL.key}"[:800]
+    return f"{text}\nmodel={model_key or MODEL.key}"[:800]
 
 
 def status_html(text: str) -> str:
@@ -1067,7 +1074,7 @@ if st.session_state.processing:
             exc.original,
             exc_info=exc.original if exc.kind == "unknown" else None,
         )
-        fail(exc.user_message, _detail(exc.original or exc))
+        fail(exc.user_message, _detail(exc.original or exc, getattr(exc, "model", "")))
     except Exception as exc:  # last-resort guard so the UI never dies
         if is_control_flow(exc):
             # Streamlit's own control flow, not a failure. Re-raised so the rerun or

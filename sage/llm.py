@@ -42,6 +42,12 @@ class AssistantError(Exception):
     def __init__(self, kind: str, original: BaseException | None = None) -> None:
         self.kind = kind if kind in _MESSAGES else "unknown"
         self.original = original
+        # The model that actually raised, filled in by `engine.run_conversation`,
+        # which is the only layer that knows there was more than one candidate. Not
+        # for the reader: it goes in the details panel, where the question being
+        # answered is "which endpoint said no", and after a failover that is not the
+        # model the picker had selected.
+        self.model: str = ""
         super().__init__(_MESSAGES[self.kind])
 
     @property

@@ -242,7 +242,35 @@ def run_turn(
 
 
 # Why a model refused, in words a user can act on.
-REASONS = {"quota": "out of credit", "auth": "its key was rejected"}
+REASONS = {
+    "quota": "out of credit",
+    "auth": "its key was rejected",
+    "rate_limit": "rate limited",
+    "unavailable": "temporarily unavailable",
+}
+
+# The failures a *different provider* actually fixes, which is the only reason to
+# spend a second request on one.
+#
+# The line is drawn at what the endpoint said about itself. `quota` and `auth` are
+# properties of the key, and `rate_limit` and `unavailable` are properties of the
+# endpoint: in all four cases the other provider is a different key on a different
+# endpoint, so it is either fine or fails for its own reasons.
+#
+# `rate_limit` and `unavailable` were missing, and a 429 is the most likely failure
+# this deployment has: it runs on a free tier by preference. The reader got "the
+# assistant is busy right now, please wait a moment" while a second, working provider
+# sat configured and untried, which is the one thing having two of them is for.
+# Adding them costs nothing in requests, because `llm.open_stream` classifies both as
+# retryable and has already spent its attempts and its backoff on them before this
+# function ever sees the error. There is nothing left to wait for at this point.
+#
+# `network`, `context` and `unknown` stay out, and `unknown` is the important one:
+# a fault of our own making lands there, and trying it again on someone else's
+# endpoint would hide it behind a second bill rather than report it. A timeout stays
+# out for a related reason, since the likeliest cause is this end, and the retry buys
+# one more connect timeout for the reader to wait through.
+FAILS_OVER = frozenset({"quota", "auth", "rate_limit", "unavailable"})
 
 
 def run_conversation(
@@ -256,10 +284,9 @@ def run_conversation(
 ) -> Iterator[Event]:
     """`run_turn` with the failover the Streamlit app has always done by rerunning.
 
-    Tries `models` in order. Only "quota" and "auth" move to the next one — those
-    are the two failures that a different provider actually fixes, and waiting does
-    not. Anything else is raised, because retrying it on another model would hide a
-    real fault behind a second bill.
+    Tries `models` in order. The kinds in `FAILS_OVER` move to the next provider;
+    anything else is raised, because retrying an unattributed fault on another model
+    would hide it behind a second bill. See that set for where the line is and why.
 
     A `notice` event is emitted before the retry, and the successful `answer` event
     carries `switched_from` so a caller can say so in the past tense once there is
@@ -291,10 +318,16 @@ def run_conversation(
                     yield event
             return
         except llm.AssistantError as exc:
+            # Which model actually failed, so a caller reporting the failure names
+            # that one rather than whichever the picker had selected. After a
+            # failover those are two different providers, and a details panel
+            # reading `model=mistral:…` under a 429 from Zen's endpoint is a
+            # contradiction that sends the reader looking in the wrong place.
+            exc.model = model.key
             alternative = next(
                 (item for item in queue if item.provider != model.provider), None
             )
-            if exc.kind not in ("quota", "auth") or alternative is None:
+            if exc.kind not in FAILS_OVER or alternative is None:
                 raise
             logger.info(
                 "%s unusable (%s); failing over to %s",
