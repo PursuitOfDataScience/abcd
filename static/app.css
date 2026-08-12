@@ -1051,9 +1051,15 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
  * Selected on the href and not on a class, which is the whole reason this is possible:
  * the answer is model output and is rendered as markdown with HTML escaped, so there is
  * no way to put a class on anything inside it and no intention of relaxing that to get
- * one. `cite.url_for` is what gives a citation its `sage-cite` parameter, and it gives
- * it to exactly the links that point at a passage that was actually read. A link to a
- * whole page has no such parameter, keeps its words, and is styled as an ordinary link.
+ * one. `cite.url_for` is what gives a citation its parameters, and it gives them to
+ * exactly the links that point at a passage that was actually read. A link to a whole
+ * page has neither, keeps its words, and is styled as an ordinary link.
+ *
+ * Both parameters, because either one on its own is a citation and matching one of them
+ * shipped two bare "1"s into a real answer. A section with a published anchor carries
+ * `sage-cite`; a page whose sections have no anchors of their own still carries
+ * `sage-quote`, which is what the site matches on to find the passage. `sage/cite.py`
+ * asks the same question in `points_at_a_passage`, and the two lists have to agree.
  *
  * Scoped under the answer so it cannot reach the Sources chips, whose own hrefs carry
  * the same parameter and which are a different thing entirely.
@@ -1065,7 +1071,8 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
  * marker made of those is a small chip rather than a new colour to get wrong. What is
  * new is the size, so `tools/render_check.py` renders one and holds it to the same
  * contrast floor as everything else. */
-.stChatMessage [data-testid="stChatMessageContent"] a[href*="sage-cite="] {
+.stChatMessage [data-testid="stChatMessageContent"] a[href*="sage-cite="],
+.stChatMessage [data-testid="stChatMessageContent"] a[href*="sage-quote="] {
     display: inline-block;
     min-width: 1.1em;
     padding: 0 0.34em;
@@ -1088,7 +1095,8 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
         color var(--transition);
 }
 
-.stChatMessage [data-testid="stChatMessageContent"] a[href*="sage-cite="]:hover {
+.stChatMessage [data-testid="stChatMessageContent"] a[href*="sage-cite="]:hover,
+.stChatMessage [data-testid="stChatMessageContent"] a[href*="sage-quote="]:hover {
     background: var(--card-bg-hover);
     border-color: var(--card-border-hover);
     color: var(--brand-text) !important;

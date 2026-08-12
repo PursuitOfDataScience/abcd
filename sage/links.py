@@ -76,11 +76,17 @@ def compact_citations(text: str, corpus: Corpus) -> tuple[str, dict[str, int]]:
     the text can renumber what is already on screen. The strip is numbered from the
     mapping returned here, so the two agree without either having to be built first.
 
-    Only links that resolve to a *chunk* are touched, which is exactly the citation
-    case: those are the ones `cite.url_for` gives a `sage-cite` parameter to, and that
-    parameter is what the stylesheet selects on to make a marker look like a marker. A
-    link to a whole page keeps its words, because a bare "1" that did not point at a
-    passage would be a footnote to nothing.
+    A link is shrunk when the URL it resolves to points at a passage, which is the
+    same question `cite.points_at_a_passage` answers for the stylesheet. Both have to
+    ask it the same way, and for one commit they did not: this shrank anything that
+    resolved to a chunk while the stylesheet matched on `sage-cite` alone, so a section
+    with no anchor of its own became a bare "1" in ordinary link blue with no pill and
+    nothing to say it was a citation. Asking the finished URL rather than the chunk is
+    what keeps the two from drifting apart again.
+
+    A link to a whole page, carrying neither an anchor nor a quote, keeps the words the
+    model wrote: a bare number pointing at nothing in particular is a footnote to
+    nothing.
 
     Returns the rewritten text with the original targets still in place, so
     `fix_links` runs afterwards exactly as it did before and resolves them as usual.
@@ -92,7 +98,7 @@ def compact_citations(text: str, corpus: Corpus) -> tuple[str, dict[str, int]]:
         if target.startswith(_EXTERNAL):
             return match.group(0)
         chunk = corpus.chunk(target.strip())
-        if chunk is None:
+        if chunk is None or not cite.points_at_a_passage(cite.url_for(chunk)):
             return match.group(0)
         number = numbering.setdefault(chunk.id, len(numbering) + 1)
         return f"[{number}]({target})"

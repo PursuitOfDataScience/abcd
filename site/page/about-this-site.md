@@ -40,7 +40,7 @@ hire, rates, or a CV, so do not answer questions about those.
 
 ## What is on the site
 
-Articles run from **August 2021 to August 2026** — 114 of them at the time this
+Articles run from **August 2021 to August 2026** — 117 of them at the time this
 corpus was built. They fall into two broad and quite distinct groups.
 
 **2021–2022: R and exploratory data analysis.** The bulk of the archive. Most are

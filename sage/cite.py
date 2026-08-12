@@ -129,3 +129,27 @@ def with_citation(url: str, quote: str = "") -> str:
 def url_for(chunk) -> str:
     """The published URL of a chunk, carrying its own highlight."""
     return with_citation(chunk.url, quote_of(chunk))
+
+
+# The parameters that mark a link as pointing *into* a page rather than at it. Either
+# one is enough: a section citation carries the anchor, and a page whose sections have
+# no published anchors of their own still carries the quote, which is what the site
+# matches on to find the passage.
+CITATION_PARAMS = (ANCHOR_PARAM, QUOTE_PARAM)
+
+
+def points_at_a_passage(url: str) -> bool:
+    """Whether `url` is a citation, asked of the finished URL rather than the chunk.
+
+    Read by two places that must agree and did not: `links.compact_citations`, which
+    decides whether to shrink a citation to a numbered marker, and the stylesheet,
+    which decides whether to draw one as a marker. The first used to ask "did this
+    resolve to a chunk?" and the second "does the href carry `sage-cite`?", and those
+    are different questions for any chunk without an anchor: the about note's sections
+    have none, so a real answer showed two bare "1"s set in ordinary link blue with
+    nothing to say they were citations.
+
+    `assistant/static/app.css` selects on the same two parameters. Adding a third here
+    means adding it there.
+    """
+    return any(f"{param}=" in url for param in CITATION_PARAMS)
