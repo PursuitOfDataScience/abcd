@@ -434,6 +434,38 @@ def model_options() -> list[providers.Model]:
 
 MODELS = model_options()
 
+# The ladder, named in the log at WARNING, because "which models does this deployment
+# actually have" has been guessed at repeatedly and is not answerable from anywhere
+# else. Every attempt at the last three days of failures needed it.
+#
+# The specific trap it catches: `current_model` honours `config.DEFAULT_MODEL` only if
+# that exact id is in what the provider's `/models` returned, and a free lineup rotates
+# its ids without notice. So a default naming a model the endpoint no longer serves is
+# not an error, it is a silent fall through to `MODELS[0]`, which is the first *Mistral*
+# model, which on this deployment is out of credit. A reader then gets a 402 naming a
+# model nobody chose, and nothing says the default was discarded.
+#
+# Cached, so it is written once per process rather than once per rerun. Streamlit
+# re-executes this module on every interaction, and a line repeated on every question is
+# a line whose first instance nobody can find.
+@st.cache_resource(show_spinner=False)
+def _announce(ready: tuple[str, ...], offered: tuple[str, ...], default: str) -> bool:
+    logger.warning(
+        "Providers with a key: %s. Models offered: %s",
+        ", ".join(ready) or "none", ", ".join(offered) or "none",
+    )
+    if offered and default not in offered:
+        logger.warning(
+            "The configured default %r is not in that list, so it was ignored and %s "
+            "will be tried first instead. Check SAGE_DEFAULT_MODEL against the ids the "
+            "provider actually serves.",
+            default, offered[0],
+        )
+    return True
+
+
+_announce(tuple(READY), tuple(model.key for model in MODELS), config.DEFAULT_MODEL)
+
 
 def current_model() -> providers.Model:
     """The selected model, falling back to the configured default then anything."""
@@ -611,6 +643,23 @@ def render_assistant(position: int, message: dict) -> None:
         render_rating(position, message)
 
 
+def _ladder(exc: BaseException | None) -> str:
+    """Every candidate that refused, and how many were configured at all.
+
+    The panel used to name one model, and one model is not the story. A 402 from
+    Mistral reads identically whether Zen was tried first and rate-limited or was never
+    in the queue because its key never reached the app, and those need opposite
+    responses. This says which it was, and `of N configured` catches the case where a
+    provider is missing entirely: a ladder of three on a deployment that should have
+    twelve is the whole diagnosis.
+    """
+    tried = getattr(exc, "tried", None) or []
+    if not tried:
+        return ""
+    chain = "; ".join(f"{key} -> {kind}" for key, kind in tried)
+    return f"tried {len(tried)} of {len(MODELS) or 1} configured: {chain}"
+
+
 def _detail(exc: BaseException | None, model_key: str = "") -> str:
     """A one-line, non-secret description of a failure for the details panel.
 
@@ -635,6 +684,17 @@ def _detail(exc: BaseException | None, model_key: str = "") -> str:
     if said:
         text = f"{text}\n{said}"
     return f"{text}\nmodel={model_key or MODEL.key}"[:800]
+
+
+def _failure_report(exc: llm.AssistantError) -> str:
+    """The details panel's text for a turn that ran out of candidates."""
+    parts = [_detail(exc.original or exc, getattr(exc, "model", ""))]
+    ladder = _ladder(exc)
+    if ladder:
+        parts.append(ladder)
+    providers_ready = ", ".join(READY) or "none"
+    parts.append(f"providers configured: {providers_ready}")
+    return "\n".join(p for p in parts if p)[:1200]
 
 
 def status_html(text: str) -> str:
@@ -1089,7 +1149,7 @@ if st.session_state.processing:
             exc.original,
             exc_info=exc.original if exc.kind == "unknown" else None,
         )
-        fail(exc.user_message, _detail(exc.original or exc, getattr(exc, "model", "")))
+        fail(exc.user_message, _failure_report(exc))
     except Exception as exc:  # last-resort guard so the UI never dies
         if is_control_flow(exc):
             # Streamlit's own control flow, not a failure. Re-raised so the rerun or

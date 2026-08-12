@@ -353,6 +353,9 @@ def run_conversation(
     switched_from: tuple[str, str] | None = None
     attempts = 0
     started = time.monotonic()
+    # What refused, in order. Attached to whatever is finally raised so the caller can
+    # report the ladder rather than its last rung.
+    tried: list[tuple[str, str]] = []
 
     while queue:
         model = queue.pop(0)
@@ -394,6 +397,8 @@ def run_conversation(
             # reading `model=mistral:…` under a 429 from Zen's endpoint is a
             # contradiction that sends the reader looking in the wrong place.
             exc.model = model.key
+            tried.append((model.key, exc.kind))
+            exc.tried = list(tried)
             if exc.kind not in FAILS_OVER:
                 raise
             if exc.kind in PRUNES_PROVIDER:

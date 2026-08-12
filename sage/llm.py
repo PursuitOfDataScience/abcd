@@ -67,6 +67,13 @@ class AssistantError(Exception):
         # answered is "which endpoint said no", and after a failover that is not the
         # model the picker had selected.
         self.model: str = ""
+        # Every candidate that refused, in order, as (model key, kind). Filled in by
+        # `engine.run_conversation`, and the reason it exists is that reporting only
+        # the last link hides which ladder was walked. A 402 from Mistral looks the
+        # same whether Zen was tried first and rate-limited, or was never configured
+        # and never in the queue: two different problems with two different fixes, and
+        # nothing on screen or in the log told them apart.
+        self.tried: list[tuple[str, str]] = []
         super().__init__(_MESSAGES[self.kind])
 
     @property
