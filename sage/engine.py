@@ -55,6 +55,15 @@ logger = logging.getLogger(__name__)
 STATUS = "status"
 NOTICE = "notice"
 ANSWER = "answer"
+# A fragment of the answer as it arrives. A caller may render these as they come; see
+# `_read_round` for the one guarantee attached to them, which is that they are never
+# retracted except by the event below.
+DELTA = "delta"
+# Drop whatever DELTAs have been rendered for this turn. Emitted only when a model
+# writes before asking for a tool, which no model on the current lineup does. A caller
+# that ignores it is not wrong so much as chatty: it will show a sentence of narration
+# above the answer.
+RESET = "reset"
 
 # Shown while the first token is still in flight, before the model has said whether
 # it wants to search or answer.
@@ -135,15 +144,50 @@ def _sources(runner: ToolRunner) -> list[dict]:
     ]
 
 
-def _round_text(turn) -> str:
-    """Read a round to the end and return everything it said.
+def _read_round(turn, *, show: bool) -> Iterator[Event]:
+    """Read a round to the end, handing out text only while it cannot be taken back.
 
-    The whole round is consumed here, with nothing yielded to the caller on the way,
-    because until the stream ends there is no way to know whether this text is the
-    answer or a preamble the model wrote before calling a tool. See the module
-    docstring: showing it and taking it back is the bug this shape exists to remove.
+    The invariant is unchanged and is the whole point of this function: nothing is ever
+    shown to a reader and then removed. What changed is the price paid for it. This used
+    to consume the round in silence and hand back a finished string, because a round's
+    text is only known to be an answer once the stream has closed without asking for a
+    tool, and the alternative was the bug in the module docstring: "Let me search the
+    articles for…" appearing in the bubble and being wiped by the status line.
+
+    `turn.wants_tools` is earlier evidence than that. It is set by the first tool-call
+    fragment rather than at the end of the round, and measured against every model this
+    deployment serves, a tool round carries no content at all: `hy3-free` sent four
+    tool-call fragments and zero characters, both nemotrons the same. `deltas()` only
+    yields non-empty text, so on those rounds there is nothing to show and the question
+    never arises.
+
+    A model that narrates before calling a tool is therefore the only case that can put
+    text on screen that is not an answer, and it is handled rather than assumed away: the
+    caller is told to drop what it has, once, and the round goes quiet. That is logged,
+    because a lineup where it happens often is a lineup this should be turned off for,
+    and `SAGE_STREAM=0` does that without a deploy.
     """
-    return "".join(turn.deltas())
+    shown = False
+    for piece in turn.deltas():
+        if turn.wants_tools:
+            show = False
+            continue
+        if show and piece:
+            shown = True
+            yield Event(DELTA, piece)
+
+    # Checked after the loop and not only inside it. `deltas()` yields text and nothing
+    # else, so a round whose tool call arrives after its last word never comes back
+    # round the loop to be noticed, and a first draft of this withdrew narration only
+    # when the model happened to keep talking afterwards. Which is to say: in the one
+    # ordering that does not occur, and not in the one that does.
+    if shown and turn.wants_tools:
+        logger.warning(
+            "%s wrote %d characters and then asked for a tool, so what was shown had "
+            "to be withdrawn. Set SAGE_STREAM=0 if this model does it often.",
+            getattr(turn, "model_key", "the model"), len(turn.text),
+        )
+        yield Event(RESET)
 
 
 # What one model may spend before the ladder stops waiting for it, checked between tool
@@ -220,8 +264,32 @@ def run_turn(
         messages = _grounded(messages, index, question, runner, profile)
         turn = llm.start(provider, model.id, messages, None, retry=patient)
 
+    # Whether this model has already shown, in this turn, that it says nothing while
+    # calling a tool. Nothing is streamed until it has.
+    #
+    # This is what lets the answer be typed out without giving up the guarantee that
+    # nothing is shown and then removed. The two cannot both be had in general: a
+    # round's text is only known to be an answer once the round has closed without
+    # asking for a tool, so any character shown before that is a character that might
+    # have to be withdrawn. What can be had is evidence. A model that has completed a
+    # tool round in silence has demonstrated the property that makes streaming safe for
+    # it, and every model this deployment serves demonstrates it on the first round:
+    # `hy3-free` sends four tool-call fragments and no text, both nemotrons the same.
+    #
+    # A model that narrates instead ("Let me look that up.") never earns it and is never
+    # streamed, which is exactly the old behaviour for exactly the models the old
+    # behaviour was written for. The cost is that a question answered without any search
+    # does not stream, because a first round carrying text is indistinguishable from a
+    # narrated preamble until it ends. That is the right way round: the common question
+    # here searches first, and the rare one arrives whole a second sooner.
+    quiet_while_working = False
+
     for round_number in range(rounds + 1):
-        text = _round_text(turn)
+        turn.model_key = model.key
+        yield from _read_round(turn, show=config.STREAM and quiet_while_working)
+        text = turn.text
+        if turn.tool_calls and not text.strip():
+            quiet_while_working = True
         # The answer is the text of the round that asked for no tools. Nothing
         # else is: a tool round's narration goes no further than this loop, which
         # is what stops a sentence appearing in the bubble and being erased by the

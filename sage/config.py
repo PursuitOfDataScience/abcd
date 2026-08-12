@@ -167,6 +167,25 @@ MODEL = os.getenv("SAGE_MODEL", "mistral-small-latest")
 # A blog answer is a paragraph and a citation, and the cap is a ceiling rather
 # than a target — but a generous ceiling on a public endpoint is somebody else's
 # bill, so it is sized for the work actually being done here.
+# Whether the answer appears a word at a time or all at once when it is finished.
+#
+# Off for two versions, and for a good reason at the time: every round was streamed
+# including the ones that end in a tool call, models narrate those, and the narration
+# was wiped from the bubble by the status line replacing it. An answer that erases
+# itself reads as broken, so the safe move was to hand out nothing until a round had
+# closed without asking for a tool.
+#
+# On again because the evidence changed rather than the opinion. `engine._read_round`
+# now watches `Turn.wants_tools`, which is set by the first tool-call fragment rather
+# than at the end of the round, and on every model this deployment serves a tool round
+# carries no content whatsoever: the round that searches sends tool-call fragments and
+# not one character. There is nothing to wipe because there was never anything to show.
+#
+# Set `SAGE_STREAM=0` if a future model narrates before it searches. The engine logs a
+# warning naming the model each time it has to withdraw text, so that decision has
+# evidence behind it too.
+STREAM = os.getenv("SAGE_STREAM", "1").strip().lower() not in ("0", "false", "no", "")
+
 MAX_TOKENS = _env_int("SAGE_MAX_TOKENS", 1800)
 TEMPERATURE = _env_float("SAGE_TEMPERATURE", 0.2)
 MAX_TOOL_ROUNDS = _env_int("SAGE_MAX_TOOL_ROUNDS", 6)

@@ -1127,6 +1127,16 @@ if st.session_state.processing:
         # "X is unavailable, retrying with Y" — accurate, and an answer to a
         # question no visitor asked.
         answered: dict | None = None
+        # The answer as it arrives. Rendered into the same placeholder the finished
+        # answer lands in, so the last partial frame and the first complete one are the
+        # same element and the handover does not move anything on screen.
+        streamed = ""
+        # Markdown is re-rendered per frame, and a frame per token is a websocket
+        # message per token for a panel that is often a phone on a train. Sixteen
+        # characters is about three frames a second at these models' speeds, which
+        # reads as typing rather than as stuttering, and it costs a fraction of the
+        # messages.
+        painted = 0
         for event in engine.run_conversation(
             index=INDEX,
             messages=messages,
@@ -1136,20 +1146,34 @@ if st.session_state.processing:
         ):
             if event.kind == engine.STATUS:
                 show_status(status, event.text)
+            elif event.kind == engine.DELTA:
+                # The status line gives way the moment there is something better to
+                # look at, rather than sitting above a half-written answer.
+                if not streamed:
+                    status.empty()
+                streamed += event.text
+                if len(streamed) - painted >= 16:
+                    painted = len(streamed)
+                    with answer.container(), st.chat_message("assistant"):
+                        st.markdown(streamed)
+            elif event.kind == engine.RESET:
+                # A model wrote before asking for a tool. Rare enough that no model on
+                # the current lineup does it, and handled rather than assumed away.
+                streamed, painted = "", 0
+                answer.empty()
             elif event.kind == engine.ANSWER:
                 answered = event.data
 
         status.empty()
-        # Drawn once, finished, with its links already resolved, and drawn here
-        # rather than left to the rerun below so the panel is not empty for the
-        # width of a script run.
+        # Drawn once more, finished, and with its links resolved this time. What was
+        # streamed is the model's raw text; `fix_links` is what turns a corpus path into
+        # a link a reader can follow, and it needs the whole answer to do it. So the
+        # final frame replaces the last partial one in the same placeholder: the words
+        # do not move, the citations become clickable.
         #
-        # Nothing is painted before this point. The engine no longer hands out
-        # partial text (see its module docstring), which is what stops the model's
-        # "Let me search the articles…" appearing in this bubble and being wiped by
-        # the next status line. The rerun that follows redraws exactly what is drawn
-        # here, from the same text through the same `fix_links`, so the handover
-        # between the two is invisible.
+        # Drawn here rather than left to the rerun below so the panel is not empty for
+        # the width of a script run. The rerun redraws exactly this, from the same text
+        # through the same `fix_links`, so that handover is invisible too.
         if answered and answered["text"]:
             with answer.container(), st.chat_message("assistant"):
                 st.markdown(links.fix_links(answered["text"], CORPUS))

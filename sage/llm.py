@@ -199,6 +199,12 @@ class Turn:
     text: str = ""
     tool_calls: list[dict] = field(default_factory=list)
     finished: bool = False
+    # True from the moment a tool-call fragment arrives, rather than at the end of the
+    # round like `tool_calls`. That difference is what lets a caller stream text at all:
+    # the question "is this round the answer, or a preamble to a search?" has no answer
+    # until the stream closes, but this is the earliest evidence there is, and on every
+    # model this deployment serves it arrives before the first character of content.
+    wants_tools: bool = False
 
     def deltas(self) -> Iterator[str]:
         pending: dict[int, dict] = {}
@@ -210,6 +216,7 @@ class Turn:
                     self.text += chunk.text
                     yield chunk.text
                 for fragment in chunk.tool_calls:
+                    self.wants_tools = True
                     slot = pending.setdefault(
                         fragment["index"], {"id": "", "name": "", "args": ""}
                     )
