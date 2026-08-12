@@ -272,6 +272,27 @@ REASONS = {
 # one more connect timeout for the reader to wait through.
 FAILS_OVER = frozenset({"quota", "auth", "rate_limit", "unavailable"})
 
+# Of those, the two that are true of the *key* rather than of the request, and so are
+# true of every model behind that key. These drop the rest of their provider; the
+# other two do not, because a model refused for the endpoint's own reasons says
+# nothing about the endpoint's other models.
+KEY_LEVEL = frozenset({"quota", "auth"})
+
+# How many models one question may cost, across every provider.
+#
+# There is no free lunch in the other direction either: the ladder here is three
+# Mistral models and a dozen or so free ones, and walking all of it costs a request
+# each, plus the retries and the 1s/2s backoff `llm.start` spends on every retryable
+# kind on the way past. Unbounded, a question asked while both providers are refusing
+# would sit there for the better part of a minute before saying so, which is a worse
+# answer than a prompt error.
+#
+# Four is two providers plus two more attempts, which covers the reported case (a paid
+# key out of credit, then a rate-limited free tier that has other models) while
+# keeping the failure inside about ten seconds. Anything left untried when this is
+# reached is logged, so the ceiling cannot quietly look like an exhausted ladder.
+MAX_MODELS_TRIED = 4
+
 
 def run_conversation(
     *,
@@ -297,9 +318,11 @@ def run_conversation(
         raise llm.AssistantError("unknown")
 
     switched_from: tuple[str, str] | None = None
+    attempts = 0
 
     while queue:
         model = queue.pop(0)
+        attempts += 1
         try:
             for event in run_turn(
                 index=index,
@@ -324,11 +347,28 @@ def run_conversation(
             # reading `model=mistral:…` under a 429 from Zen's endpoint is a
             # contradiction that sends the reader looking in the wrong place.
             exc.model = model.key
-            alternative = next(
-                (item for item in queue if item.provider != model.provider), None
-            )
-            if exc.kind not in FAILS_OVER or alternative is None:
+            if exc.kind not in FAILS_OVER:
                 raise
+            if exc.kind in KEY_LEVEL:
+                # A spent or rejected key is spent for every model behind it. Trying
+                # each in turn is a round trip per model to learn one fact.
+                queue = [item for item in queue if item.provider != model.provider]
+            else:
+                # The endpoint refused this request, not this key, so the rest of
+                # that provider is still worth something. Another provider is the
+                # better bet and goes first; a sibling model is tried only once
+                # there is no other provider left, which is exactly the case this
+                # was reported in. A stable sort on "same provider?" reorders
+                # without disturbing the preference order inside either group.
+                queue.sort(key=lambda item: item.provider == model.provider)
+            if not queue or attempts >= MAX_MODELS_TRIED:
+                if queue:
+                    logger.warning(
+                        "Giving up after %d models; %d left untried (last: %s, %s)",
+                        attempts, len(queue), model.key, exc.kind,
+                    )
+                raise
+            alternative = queue[0]
             logger.info(
                 "%s unusable (%s); failing over to %s",
                 model.key, exc.kind, alternative.key,
@@ -341,7 +381,5 @@ def run_conversation(
                 f"{model.label} is unavailable ({REASONS.get(exc.kind, exc.kind)}). "
                 f"Retrying with {alternative.label}…",
             )
-            # A spent key is spent for every model behind it, not just this one.
-            queue = [item for item in queue if item.provider != model.provider]
 
     raise llm.AssistantError("unknown")
