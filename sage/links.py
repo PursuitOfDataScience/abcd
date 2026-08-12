@@ -61,6 +61,45 @@ def resolve(target: str, corpus: Corpus) -> str | None:
     return profile.url_for(document.source, document.path, anchor)
 
 
+def compact_citations(text: str, corpus: Corpus) -> tuple[str, dict[str, int]]:
+    """Shrink the inline citations to numbered markers, and say which is which.
+
+    A model cites by writing the section's title into the link, so a sentence arrives
+    as "...for each card a job holds [Graphics cards, where there are graphics
+    cards](post/…/slurmwatch.md#graphics-cards-where-there-are-graphics-cards)." The
+    citation is then longer than the clause it supports and the eye has to step over it
+    to finish the sentence. Numbered markers say the same thing in one character.
+
+    Numbered by **first appearance in the answer**, not by the order of the Sources
+    strip. That is what makes the same numbering hold while the answer is still
+    streaming: a marker is assigned when its citation first arrives and nothing later in
+    the text can renumber what is already on screen. The strip is numbered from the
+    mapping returned here, so the two agree without either having to be built first.
+
+    Only links that resolve to a *chunk* are touched, which is exactly the citation
+    case: those are the ones `cite.url_for` gives a `sage-cite` parameter to, and that
+    parameter is what the stylesheet selects on to make a marker look like a marker. A
+    link to a whole page keeps its words, because a bare "1" that did not point at a
+    passage would be a footnote to nothing.
+
+    Returns the rewritten text with the original targets still in place, so
+    `fix_links` runs afterwards exactly as it did before and resolves them as usual.
+    """
+    numbering: dict[str, int] = {}
+
+    def replace(match: re.Match[str]) -> str:
+        target = match.group(2)
+        if target.startswith(_EXTERNAL):
+            return match.group(0)
+        chunk = corpus.chunk(target.strip())
+        if chunk is None:
+            return match.group(0)
+        number = numbering.setdefault(chunk.id, len(numbering) + 1)
+        return f"[{number}]({target})"
+
+    return _MARKDOWN_LINK.sub(replace, text), numbering
+
+
 def fix_links(text: str, corpus: Corpus) -> str:
     """Point internal links at published URLs; unlink what cannot be resolved."""
     text = _ATTR_LIST.sub("", text)

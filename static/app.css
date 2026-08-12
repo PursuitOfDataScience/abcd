@@ -1034,6 +1034,66 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
 
 .source-chip .source-kind { opacity: 0.65; font-size: 0.68rem; }
 
+/* The number the prose gave this section, so a marker in a sentence and a chip under
+ * the answer are visibly the same citation. Reads as part of the chip rather than as
+ * a second element: same colour, just heavier and set off by a hair of space. */
+.source-chip .source-number {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.75;
+    margin-right: 1px;
+}
+
+/* ===== INLINE CITATIONS ===== */
+
+/* The marker a sentence carries when it rests on a section.
+ *
+ * Selected on the href and not on a class, which is the whole reason this is possible:
+ * the answer is model output and is rendered as markdown with HTML escaped, so there is
+ * no way to put a class on anything inside it and no intention of relaxing that to get
+ * one. `cite.url_for` is what gives a citation its `sage-cite` parameter, and it gives
+ * it to exactly the links that point at a passage that was actually read. A link to a
+ * whole page has no such parameter, keeps its words, and is styled as an ordinary link.
+ *
+ * Scoped under the answer so it cannot reach the Sources chips, whose own hrefs carry
+ * the same parameter and which are a different thing entirely.
+ *
+ * Small and quiet, which is the request, and the request is also how the answer's own
+ * colour came to be unreadable at 1.51:1, so none of these values are picked by eye.
+ * The palette is the Sources chip's, unchanged: `--chip-bg`, `--chip-border` and
+ * `--chip-fg` are already measured in both schemes by the stylesheet audit, and a
+ * marker made of those is a small chip rather than a new colour to get wrong. What is
+ * new is the size, so `tools/render_check.py` renders one and holds it to the same
+ * contrast floor as everything else. */
+.stChatMessage [data-testid="stChatMessageContent"] a[href*="sage-cite="] {
+    display: inline-block;
+    min-width: 1.1em;
+    padding: 0 0.34em;
+    margin: 0 1px 0 2px;
+    border-radius: 5px;
+    background: var(--chip-bg);
+    border: 1px solid var(--chip-border);
+    /* Beats the `a` rule above, which paints every link in the answer brand blue. */
+    color: var(--chip-fg) !important;
+    font-size: 0.72em;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.45;
+    text-align: center;
+    text-decoration: none !important;
+    /* Lifted rather than made a <sup>: a real superscript shrinks the text a second
+     * time, and this is already at the floor of what is legible. */
+    vertical-align: 0.18em;
+    transition: background var(--transition), border-color var(--transition),
+        color var(--transition);
+}
+
+.stChatMessage [data-testid="stChatMessageContent"] a[href*="sage-cite="]:hover {
+    background: var(--card-bg-hover);
+    border-color: var(--card-border-hover);
+    color: var(--brand-text) !important;
+}
+
 /* ===== FEEDBACK ===== */
 [class*="st-key-rate-"] { margin-top: 0.3rem !important; }
 

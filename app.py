@@ -582,7 +582,7 @@ def cited_href(source: dict) -> str:
     return cite.with_citation(source["url"], cite.quote_of(chunk) if chunk else "")
 
 
-def _chip(url: str, label: str, kind: str = "") -> str:
+def _chip(url: str, label: str, kind: str = "", number: int | None = None) -> str:
     """One source chip.
 
     A citation to the article the reader already has open behind the panel is not
@@ -595,18 +595,60 @@ def _chip(url: str, label: str, kind: str = "") -> str:
     """
     here = bool(CONTEXT_URL) and _page_of(url) == _page_of(CONTEXT_URL)
     classes = "source-chip source-chip--here" if here else "source-chip"
+    lead = (
+        f'<span class="source-number">{number}</span>' if number is not None else ""
+    )
     tail = f'<span class="source-kind">{html.escape(kind)}</span>' if kind else ""
     return (
         f'<a class="{classes}" href="{html.escape(url, quote=True)}" '
-        f'target="_blank" rel="noopener noreferrer">{html.escape(label)}{tail}</a>'
+        f'target="_blank" rel="noopener noreferrer">'
+        f'{lead}{html.escape(label)}{tail}</a>'
     )
 
 
-def render_sources(sources: list[dict], related: list[dict]) -> None:
+def _settled(text: str) -> str:
+    """A half-arrived citation held back until it is a citation.
+
+    Markdown links arrive a character at a time like everything else, so a frame lands
+    mid-way through one and renders `[Graphics cards, where there are gra` as prose.
+    It then becomes a `1` when the closing bracket turns up, which is a line of text
+    appearing and being taken away again inside the answer bubble, the one thing the
+    streaming design is not allowed to do.
+
+    Cutting at the last unclosed `[` costs a few characters of latency on the marker and
+    nothing else. Only the tail is considered: a `[` that already has its `]` is a
+    finished link, or was never one.
+    """
+    opened = text.rfind("[")
+    return text if opened == -1 or "]" in text[opened:] else text[:opened]
+
+
+def answer_html(text: str) -> tuple[str, dict[str, int]]:
+    """An answer ready to render, and which number each cited section was given.
+
+    The one place both render paths agree on what an answer looks like: the streamed
+    frames and the finished draw call this, so a marker cannot appear in one and not the
+    other, and the text does not reflow when the last frame replaces the last partial
+    one.
+    """
+    numbering: dict[str, int] = {}
+    if config.INLINE_CITATIONS:
+        text, numbering = links.compact_citations(text, CORPUS)
+    return links.fix_links(text, CORPUS), numbering
+
+
+def render_sources(sources: list[dict], related: list[dict],
+                   numbering: dict[str, int] | None = None) -> None:
     if not sources:
         return
+    # The number the prose used for this section, so a marker in a sentence and a chip
+    # under the answer are recognisably the same citation. A source that was retrieved
+    # and never cited in the prose has no number, and is not given one: the strip lists
+    # what was read, and inventing a marker for something the answer never pointed at
+    # would send a reader looking for a "4" that is not in the text.
     chips = "".join(
-        _chip(cited_href(source), source["label"], source["source"])
+        _chip(cited_href(source), source["label"], source["source"],
+              (numbering or {}).get(source.get("id", "")))
         for source in sources
     )
     strip = f'<div class="sources"><span class="sources-label">Sources</span>{chips}</div>'
@@ -658,10 +700,11 @@ def render_rating(position: int, message: dict) -> None:
 
 def render_assistant(position: int, message: dict) -> None:
     with st.container(key=f"answer-{position}"):
+        body, numbering = answer_html(message.get("text", ""))
         with st.chat_message("assistant"):
-            st.markdown(links.fix_links(message.get("text", ""), CORPUS))
+            st.markdown(body)
         sources = message.get("sources", [])
-        render_sources(sources, related_sections(sources))
+        render_sources(sources, related_sections(sources), numbering)
         render_rating(position, message)
 
 
@@ -1155,7 +1198,7 @@ if st.session_state.processing:
                 if len(streamed) - painted >= 16:
                     painted = len(streamed)
                     with answer.container(), st.chat_message("assistant"):
-                        st.markdown(streamed)
+                        st.markdown(answer_html(_settled(streamed))[0])
             elif event.kind == engine.RESET:
                 # A model wrote before asking for a tool. Rare enough that no model on
                 # the current lineup does it, and handled rather than assumed away.
@@ -1176,7 +1219,7 @@ if st.session_state.processing:
         # through the same `fix_links`, so that handover is invisible too.
         if answered and answered["text"]:
             with answer.container(), st.chat_message("assistant"):
-                st.markdown(links.fix_links(answered["text"], CORPUS))
+                st.markdown(answer_html(answered["text"])[0])
         else:
             answer.empty()
         st.session_state.messages.append(

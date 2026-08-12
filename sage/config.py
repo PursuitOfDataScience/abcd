@@ -167,6 +167,16 @@ MODEL = os.getenv("SAGE_MODEL", "mistral-small-latest")
 # A blog answer is a paragraph and a citation, and the cap is a ceiling rather
 # than a target — but a generous ceiling on a public endpoint is somebody else's
 # bill, so it is sized for the work actually being done here.
+# Whether an inline citation is shown as a numbered marker or as the section title the
+# model wrote. Off restores the long form exactly, which is what shipped before.
+#
+# The Sources strip is unaffected either way: it lists what was read whether or not the
+# prose points at it, and a citation the reader can follow mid-sentence is a different
+# job from a list of what the answer rests on.
+INLINE_CITATIONS = os.getenv("SAGE_INLINE_CITATIONS", "1").strip().lower() not in (
+    "0", "false", "no", ""
+)
+
 # Whether the answer appears a word at a time or all at once when it is finished.
 #
 # Off for two versions, and for a good reason at the time: every round was streamed
