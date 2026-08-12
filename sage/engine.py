@@ -40,6 +40,7 @@ app always has.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -282,26 +283,48 @@ REASONS = {
 # one more connect timeout for the reader to wait through.
 FAILS_OVER = frozenset({"quota", "auth", "rate_limit", "unavailable"})
 
-# Of those, the two that are true of the *key* rather than of the request, and so are
-# true of every model behind that key. These drop the rest of their provider; the
-# other two do not, because a model refused for the endpoint's own reasons says
-# nothing about the endpoint's other models.
-KEY_LEVEL = frozenset({"quota", "auth"})
+# Of those, the ones that write off the rest of the provider rather than just this
+# model. `quota` and `auth` are properties of the key, so they are true of everything
+# behind it.
+#
+# `rate_limit` is here on evidence, and it was not before. The argument for walking a
+# rate-limited provider's other models was that a 429 describes one request; the
+# argument against is what the deployment actually does. Observed twice: Zen answers
+# 429 for `deepseek-v4-flash-free`, then for `big-pickle`, then for `mimo-v2.5-free`,
+# so the cap is on the account and not the model. Walking it cost eight further
+# requests to an endpoint asking for fewer, made the next reader's limit worse, and
+# never once produced an answer.
+#
+# `unavailable` stays out: a 5xx really can be one model's backend, and a sibling is a
+# reasonable thing to try when a provider is up but one of its models is not.
+PRUNES_PROVIDER = frozenset({"quota", "auth", "rate_limit"})
 
-# How many models one question may cost, across every provider.
+# What bounds the walk, and why it is a clock rather than a count.
 #
-# There is no free lunch in the other direction either: the ladder here is three
-# Mistral models and a dozen or so free ones, and walking all of it costs a request
-# each, plus the retries and the 1s/2s backoff `llm.start` spends on every retryable
-# kind on the way past. Unbounded, a question asked while both providers are refusing
-# would sit there for the better part of a minute before saying so, which is a worse
-# answer than a prompt error.
+# The message a reader gets when this function gives up says to come back later, and it
+# is meant to mean that everything was tried. A count cannot promise that: this ladder
+# is three Mistral models and nine or so free ones, so a limit of four could show the
+# last-resort message with eight candidates untouched.
 #
-# Four is two providers plus two more attempts, which covers the reported case (a paid
-# key out of credit, then a rate-limited free tier that has other models) while
-# keeping the failure inside about ten seconds. Anything left untried when this is
-# reached is logged, so the ceiling cannot quietly look like an exhausted ladder.
-MAX_MODELS_TRIED = 4
+# It was four, sized when every candidate cost three requests and 1s+2s of backoff, so
+# twelve of them would have been most of a minute. That is no longer what a candidate
+# costs: patience now goes only to the last one, so the others are a single request each
+# and a refusal comes back in milliseconds. Walking the whole ladder against providers
+# that are refusing is a few seconds, and the honest limit is therefore the reader's
+# waiting time and not the number of names in a list.
+#
+# Twenty seconds is the budget, measured from the first attempt and checked before
+# starting another. In every ordinary failure the queue empties first and the reader is
+# told to come back later only once that is true. The budget binds when something is
+# slow rather than absent, which is the case where continuing would leave a reader
+# watching a status line with nothing behind it.
+#
+# MAX_MODELS_TRIED stays as a runaway backstop, at a number the present ladder cannot
+# reach, because the free lineup is discovered at runtime and nothing here controls how
+# long it gets. Either limit stopping early is logged at WARNING with the count left
+# untried, so a bounded walk cannot quietly read as an exhausted one.
+LADDER_BUDGET = 20.0
+MAX_MODELS_TRIED = 24
 
 
 def run_conversation(
@@ -329,10 +352,19 @@ def run_conversation(
 
     switched_from: tuple[str, str] | None = None
     attempts = 0
+    started = time.monotonic()
 
     while queue:
         model = queue.pop(0)
         attempts += 1
+        # Whether anything would be tried after this one, which is what decides how
+        # much patience it gets. Approximated from the time already spent rather than
+        # the time this attempt will take, which is not knowable before making it.
+        last_chance = (
+            not queue
+            or attempts >= MAX_MODELS_TRIED
+            or time.monotonic() - started >= LADDER_BUDGET
+        )
         try:
             for event in run_turn(
                 index=index,
@@ -346,7 +378,7 @@ def run_conversation(
                 # else the backoff buys nothing that the next candidate does not
                 # buy faster, and it buys it by making two more requests to a
                 # service that has just asked for fewer.
-                patient=not queue or attempts >= MAX_MODELS_TRIED,
+                patient=last_chance,
             ):
                 if event.kind == ANSWER and switched_from:
                     yield Event(
@@ -364,24 +396,28 @@ def run_conversation(
             exc.model = model.key
             if exc.kind not in FAILS_OVER:
                 raise
-            if exc.kind in KEY_LEVEL:
-                # A spent or rejected key is spent for every model behind it. Trying
+            if exc.kind in PRUNES_PROVIDER:
+                # One refusal answers for the whole provider: a spent key is spent for
+                # every model behind it, and an account-level rate limit is too. Trying
                 # each in turn is a round trip per model to learn one fact.
                 queue = [item for item in queue if item.provider != model.provider]
             else:
-                # The endpoint refused this request, not this key, so the rest of
-                # that provider is still worth something. Another provider is the
-                # better bet and goes first; a sibling model is tried only once
-                # there is no other provider left, which is exactly the case this
-                # was reported in. A stable sort on "same provider?" reorders
+                # `unavailable` only. The provider is up and one of its models is not,
+                # so its others are still worth something, but another provider is the
+                # better bet and goes first. A stable sort on "same provider?" reorders
                 # without disturbing the preference order inside either group.
                 queue.sort(key=lambda item: item.provider == model.provider)
-            if not queue or attempts >= MAX_MODELS_TRIED:
-                if queue:
-                    logger.warning(
-                        "Giving up after %d models; %d left untried (last: %s, %s)",
-                        attempts, len(queue), model.key, exc.kind,
-                    )
+            if not queue:
+                # The ladder is genuinely exhausted, which is the only case the
+                # reader's "try again later" is supposed to describe.
+                raise
+            spent = time.monotonic() - started
+            if spent >= LADDER_BUDGET or attempts >= MAX_MODELS_TRIED:
+                logger.warning(
+                    "Giving up after %d models and %.1fs; %d left untried "
+                    "(last: %s, %s)",
+                    attempts, spent, len(queue), model.key, exc.kind,
+                )
                 raise
             alternative = queue[0]
             logger.info(

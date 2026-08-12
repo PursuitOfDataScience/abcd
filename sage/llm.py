@@ -78,6 +78,49 @@ class AssistantError(Exception):
         return self.kind in _RETRYABLE
 
 
+def http_detail(exc: BaseException | None) -> str:
+    """What the endpoint actually said, which httpx's own message leaves out.
+
+    `HTTPStatusError` stringifies to "Client error '429 Too Many Requests' for url ..."
+    and nothing else, so every 429 looked identical and the question "which limit" had
+    no answer anywhere: requests a minute, tokens a minute, or a daily cap are three
+    different problems with three different responses, and one of them is fixed by
+    waiting ninety seconds.
+
+    The body is already there to be read. `OpenAICompatProvider.stream` calls
+    `response.read()` before raising, because a status cannot be raised on an unread
+    stream, so `.text` is populated and was simply discarded.
+
+    Trimmed, and headers only from a fixed list: the response is the endpoint's own
+    error text, but this goes on a public page's details panel and a whitelist is the
+    difference between reporting a rate limit and echoing whatever a third party chose
+    to put in a header.
+    """
+    response = getattr(exc, "response", None)
+    if response is None:
+        return ""
+    seen = []
+    for header in (
+        "retry-after",
+        "x-ratelimit-limit-requests", "x-ratelimit-remaining-requests",
+        "x-ratelimit-limit-tokens", "x-ratelimit-remaining-tokens",
+        "x-ratelimit-reset-requests", "x-ratelimit-reset-tokens",
+    ):
+        try:
+            value = response.headers.get(header)
+        except Exception:
+            value = None
+        if value:
+            seen.append(f"{header}: {value}")
+    try:
+        body = (response.text or "").strip()
+    except Exception:
+        body = ""
+    if body:
+        seen.append(f"body: {body[:300]}")
+    return "\n".join(seen)
+
+
 def classify(exc: BaseException) -> AssistantError:
     if isinstance(exc, AssistantError):
         return exc
@@ -221,6 +264,10 @@ def start(provider, model: str, messages: list[dict],
             error = classify(exc)
             last = error
             if not error.retryable or attempt == attempts - 1:
+                said = http_detail(exc)
+                if said:
+                    logger.warning("%s from %s said: %s", error.kind, provider.name,
+                                   said.replace("\n", " | "))
                 raise error from exc
             delay = 2**attempt
             logger.warning(

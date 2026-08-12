@@ -628,6 +628,12 @@ def _detail(exc: BaseException | None, model_key: str = "") -> str:
     )
     if status:
         text = f"{text}  (HTTP {status})"
+    # What the endpoint said about itself. Without this every 429 read the same and
+    # "which limit" had no answer: requests a minute, tokens a minute and a daily cap
+    # are three problems, and only one of them is fixed by waiting.
+    said = llm.http_detail(exc)
+    if said:
+        text = f"{text}\n{said}"
     return f"{text}\nmodel={model_key or MODEL.key}"[:800]
 
 
