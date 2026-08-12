@@ -282,14 +282,15 @@ def run_turn(
     # does not stream, because a first round carrying text is indistinguishable from a
     # narrated preamble until it ends. That is the right way round: the common question
     # here searches first, and the rare one arrives whole a second sooner.
-    quiet_while_working = False
+    quiet = model.key in _quiet_while_working
 
     for round_number in range(rounds + 1):
         turn.model_key = model.key
-        yield from _read_round(turn, show=config.STREAM and quiet_while_working)
+        yield from _read_round(turn, show=config.STREAM and quiet)
         text = turn.text
         if turn.tool_calls and not text.strip():
-            quiet_while_working = True
+            quiet = True
+            _quiet_while_working.add(model.key)
         # The answer is the text of the round that asked for no tools. Nothing
         # else is: a tool round's narration goes no further than this loop, which
         # is what stops a sentence appearing in the bubble and being erased by the
@@ -513,6 +514,22 @@ def _ready(models: list, now: float) -> list:
 def forget_refusals() -> None:
     """Drop every cool-off note. For tests, and for a caller that wants a clean walk."""
     _cooling.clear()
+    _quiet_while_working.clear()
+
+
+# Models seen to complete a tool round without writing a word, which is the evidence
+# that streaming their text cannot show a reader something that has to be taken back.
+#
+# Process-wide, and that is the fix rather than an optimisation. It was learned per
+# turn, so a model had to prove itself again on every question, and an answer that
+# needed no search never got the chance: "what can you do?" and any follow-up the model
+# answers directly have no tool round in them, so nothing streamed and the whole reply
+# landed at once. Measured in the harness at one painted frame against six.
+#
+# A model that narrates before calling a tool never enters this set, so it is never
+# streamed, which is the guarantee kept intact. What a model does once it is in the set
+# is still watched: `_read_round` withdraws text and logs if one starts narrating.
+_quiet_while_working: set[str] = set()
 
 # What bounds the walk, and why it is a clock rather than a count.
 #

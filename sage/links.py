@@ -121,7 +121,64 @@ def fix_links(text: str, corpus: Corpus) -> str:
         home = (corpus.profile or profiles.active()).home_url
         return f"[{label}]({home})" if home else label
 
-    return _MARKDOWN_LINK.sub(replace, text)
+    return _no_bare_paths(_MARKDOWN_LINK.sub(replace, text), corpus)
+
+
+# A corpus id loose in the prose: `page/about-this-site.md#getting-in-touch`, with or
+# without brackets of whatever kind around it. The bracket class is deliberately wide
+# because the model chooses them and has used 【】 as readily as [] or ().
+# The whitespace is only eaten *inside* a bracket pair. Matching `\s*` unconditionally
+# swallowed the space in front of an unbracketed path and produced "See[intro](…)".
+_BARE_PATH = re.compile(
+    r"(?:[\[\(【〔]\s*)?"
+    r"((?:post|page|docs|web|site)/[\w./-]+\.md(?:#[\w.-]+)?)"
+    r"(?:\s*[\]\)】〕])?"
+)
+_FENCED = re.compile(r"```.*?```|~~~.*?~~~|`[^`]*`", re.DOTALL)
+
+
+def _no_bare_paths(text: str, corpus: Corpus) -> str:
+    """Resolve, or remove, a corpus path the model wrote outside a markdown link.
+
+    These are filenames in a private repository and they are not for a reader. The rule
+    is already stated for the status line in `engine.describe`, which says the ids are
+    paths like `post/2026-08-09-dwellsy-rent-index.md#verdict` and that showing one
+    tells a visitor the name of a file in a checkout that is not published. The answer
+    body needed the same rule and did not have it.
+
+    It reached a reader as
+    `see the "Getting in touch" page 【page/about-this-site.md#getting-in-touch-…】`,
+    which is the whole failure in one line: the model cited something real and wrapped
+    it in brackets that are not markdown, so `_MARKDOWN_LINK` did not match, nothing
+    rewrote it, and the id was printed verbatim.
+
+    Resolved rather than merely deleted where it can be, because the model was pointing
+    at something and the reader should get the link it meant. What cannot be resolved is
+    dropped: a path that points nowhere is worth nothing to a reader and is still a
+    filename. Spans inside code are left alone, since a path in a fenced block is
+    usually the point of the example.
+    """
+    def replace(match: re.Match[str]) -> str:
+        url = resolve(match.group(1), corpus)
+        if not url:
+            return ""
+        label = match.group(1).rsplit("#", 1)[-1].replace("-", " ").strip()
+        return f"[{label}]({url})"
+
+    def clean(span: str) -> str:
+        # A dropped path leaves the space either side of it behind, and " ." reads as
+        # a typo the model did not make.
+        span = _BARE_PATH.sub(replace, span)
+        span = re.sub(r"[ \t]{2,}", " ", span)
+        return re.sub(r"\s+([,.;:!?])", r"\1", span)
+
+    out, last = [], 0
+    for code in _FENCED.finditer(text):
+        out.append(clean(text[last:code.start()]))
+        out.append(code.group(0))
+        last = code.end()
+    out.append(clean(text[last:]))
+    return "".join(out)
 
 
 # `Sources:`, `**References:**`, `**Citations**:`, `## Sources` — every decoration a
