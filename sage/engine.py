@@ -151,11 +151,20 @@ def run_turn(
     question: str = "",
     tools: bool = True,
     max_rounds: int | None = None,
+    patient: bool = True,
 ) -> Iterator[Event]:
     """One answer, on one model. Raises `llm.AssistantError` rather than yielding it.
 
     `messages` is the fully built upstream history (see `history.build`) and is not
     mutated — the tool rounds append to a local copy.
+
+    `patient=False` means the opening request gets one attempt instead of three, with
+    no backoff. `run_conversation` passes it for every candidate that has another
+    behind it: spending 3s of backoff on a model that has just reported a rate limit
+    is two more requests to a service asking for fewer, and it delays the failover
+    that was going to answer the question. The mid-conversation calls stay patient
+    whatever this says, because by then the tool rounds have been paid for and
+    starting over loses them.
     """
     rounds = config.MAX_TOOL_ROUNDS if max_rounds is None else max_rounds
     corpus = index.corpus
@@ -170,7 +179,8 @@ def run_turn(
     use_tools = tools
     if use_tools:
         try:
-            turn = llm.start(provider, model.id, messages, schemas)
+            turn = llm.start(provider, model.id, messages, schemas,
+                             retry=patient)
         except llm.AssistantError as exc:
             if not llm.rejects_tools(exc.original or exc):
                 raise
@@ -179,7 +189,7 @@ def run_turn(
             use_tools = False
     if not use_tools:
         messages = _grounded(messages, index, question, runner, profile)
-        turn = llm.start(provider, model.id, messages, None)
+        turn = llm.start(provider, model.id, messages, None, retry=patient)
 
     for round_number in range(rounds + 1):
         text = _round_text(turn)
@@ -332,6 +342,11 @@ def run_conversation(
                 question=question,
                 tools=model.supports_tools,
                 max_rounds=max_rounds,
+                # Patient only when this is the last thing left to try. Anywhere
+                # else the backoff buys nothing that the next candidate does not
+                # buy faster, and it buys it by making two more requests to a
+                # service that has just asked for fewer.
+                patient=not queue or attempts >= MAX_MODELS_TRIED,
             ):
                 if event.kind == ANSWER and switched_from:
                     yield Event(

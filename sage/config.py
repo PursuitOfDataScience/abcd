@@ -44,7 +44,22 @@ def _env_list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
 
 # --- providers -------------------------------------------------------------
 # Which provider/model a fresh session starts on, as "provider:model-id".
-DEFAULT_MODEL = os.getenv("SAGE_DEFAULT_MODEL", "mistral:mistral-small-latest")
+#
+# The free model, by the owner's instruction. It was `mistral:mistral-small-latest`,
+# which is paid and, on this deployment, out of credit: every turn opened with a
+# request that could only fail, waited out its backoff, and then failed over to this
+# model anyway. Starting here removes a wasted round trip from every question and
+# spends nothing.
+#
+# This names the *first* candidate and not the only one. `engine.run_conversation`
+# still walks the rest of the ladder behind it, so a details panel reporting a failure
+# names whichever model refused last, which is usually not this one.
+#
+# Best-effort by nature: `app.current_model` only honours it if the provider actually
+# serves it, because Zen's free lineup rotates without notice and offering a model
+# that has been withdrawn is a button that returns a 404. When it is gone the first
+# model Zen does serve is used instead.
+DEFAULT_MODEL = os.getenv("SAGE_DEFAULT_MODEL", "opencode:deepseek-v4-flash-free")
 
 MISTRAL_MODELS = _env_list(
     "SAGE_MISTRAL_MODELS",

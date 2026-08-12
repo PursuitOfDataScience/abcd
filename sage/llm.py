@@ -177,9 +177,17 @@ def _parse(arguments: str) -> dict:
 
 
 def start(provider, model: str, messages: list[dict],
-          tools: list[dict] | None = None) -> Turn:
-    """Open a streaming turn, retrying transient failures before any output."""
-    attempts = max(config.REQUEST_RETRIES, 0) + 1
+          tools: list[dict] | None = None, *, retry: bool = True) -> Turn:
+    """Open a streaming turn, retrying transient failures before any output.
+
+    `retry=False` spends one attempt and no backoff. It is for the caller that has
+    somewhere better to go: waiting 1s and then 2s on a model that has just reported
+    a rate limit is three requests to a service asking for fewer, and it delays the
+    failover that was going to answer the question anyway. See
+    `engine.run_conversation`, which is the only caller that knows whether an
+    alternative exists.
+    """
+    attempts = (max(config.REQUEST_RETRIES, 0) + 1) if retry else 1
     last: AssistantError | None = None
 
     for attempt in range(attempts):

@@ -443,6 +443,15 @@ def current_model() -> providers.Model:
             return chosen
     if MODELS:
         return MODELS[0]
+    # Nothing listed a single model, which means every provider's discovery call
+    # failed. The last resort has to name a provider *and* a model that belong
+    # together, and pairing `READY[0]` with `config.MODEL` did not: that constant is a
+    # Mistral id, so with only a Zen key configured this asked Zen for
+    # `mistral-small-latest` and got a 404 for a model nobody had chosen. The default
+    # is used when its own provider is one of the ready ones, and only then.
+    fallback = providers.parse_key(config.DEFAULT_MODEL)
+    if fallback and fallback.provider in READY:
+        return fallback
     return providers.Model(READY[0], config.MODEL)
 
 
