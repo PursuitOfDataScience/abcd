@@ -10,7 +10,7 @@ something this note does not cover, the honest answer is that the site does not 
 
 ## Who writes it
 
-The site belongs to **Y. Yu**, at the University of Chicago. The site's own two
+The site belongs to **Dr. Yu**, at the University of Chicago. The site's own two
 descriptions differ slightly in wording: the sidebar tagline reads *"AI Scientist @
 UChicago"*, while the About page says *"I am a Computational Scientist at the
 University of Chicago."* Both are the author's own wording. Use whichever fits, and
@@ -40,29 +40,29 @@ hire, rates, or a CV, so do not answer questions about those.
 
 ## What is on the site
 
-Articles run from **August 2021 to August 2026** — 117 of them at the time this
-corpus was built. They fall into two broad and quite distinct groups.
+How many articles there are, which years they cover and what was published when are
+all on the archive page.
 
-**2021–2022: R and exploratory data analysis.** The bulk of the archive. Most are
-worked analyses of a public dataset — many of them TidyTuesday releases — written in
+The articles fall into two broad and quite distinct groups.
+
+**The early group: R and exploratory data analysis.** The bulk of the archive. Most
+are worked analyses of a public dataset — many of them TidyTuesday releases — written in
 R with the tidyverse, and heavy on ggplot2 visualisation. Recurring machinery
 includes LASSO and other regularised regression, PCA, logistic regression, support
 vector machines, text mining and topic-style analyses, and network plots. The
 subjects range very widely across public datasets; search for the topic rather than
 expecting to find it listed here.
 
-**2026: language models and HPC tooling.** A smaller, much longer-form group:
+**The recent group: long-form work of three kinds.** Much longer articles, and about
+the author's own systems and datasets rather than about a public dataset someone else
+released. They divide into language models trained from scratch and the reasoning
+models built on them; open-source command-line tooling for HPC work; and empirical
+analysis of very large administrative and listings datasets, such as job postings and
+rental listings.
 
-- *Pretraining a Language Model From Scratch: Argonne 1.0 to 3.0* — five successive
-  from-scratch pretraining runs, growing from a 276-million-parameter prototype to a
-  2.9-billion-parameter model.
-- *How I Taught a Small Language Model to Reason* — turning a base model into a
-  reasoning model.
-- *Argonne 3.5-base* and *Argonne 3.5-think* — a retrained base model and the
-  reasoning model built on it, published as two articles.
-- *rapiDU: A Faster du, and the Measurements du Cannot Make* — an open-source
-  command-line tool for disk usage.
-- *slurmwatch: Live Telemetry for HPC Jobs* — job telemetry on a Slurm cluster.
+That last kind is neither an R exploratory analysis nor a machine-learning write-up,
+so a question about "the recent articles" may well mean one of those. The archive
+page lists every article by title and date.
 
 ## How to talk about the archive
 

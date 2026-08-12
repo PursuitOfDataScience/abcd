@@ -1,16 +1,11 @@
 URL: https://youzhi.netlify.app/post/2021-08-13-water-quality/water-quality/
-Title: Water Quality
+Title: Water Potability Data Analysis and Classification
+Date: 2021-08-13
 ---
-
-# Water Potability Data Analysis and Classification
-
-#### Y. Yu
-
-#### 2021-08-13
 
 ## Project Introduction {#project-introduction}
 
-The dataset is from [Kaggle](https://www.kaggle.com/adityakadiwal/water-potability), which indicates that accessing to drinking water is a basic human right. In this research project, hopefully, we can use some machine learning algorithms to shed some light on detecting the water quality based on this dataset.
+The dataset is from [Kaggle](https://www.kaggle.com/adityakadiwal/water-potability), which indicates that accessing to drinking water is a basic human right. Many places, however, still cannot provide potable water to their residents. In this research project, hopefully, we can use some machine learning algorithms to shed some light on detecting the water quality based on this dataset.
 
 First off, let’s load the appropriate libraries and then explore the dataset a bit.
 
@@ -90,7 +85,7 @@ wq %>% group_by(Potability) %>%
 ## # Turbidity <int>, sumNA <dbl>
 ```
 
-We can see that the dataset is slightly imbalanced that there are 700 more water samples for not potabile than those for potabile, but there are almost 400 more missing values for not drinkable water than drinkable water. Downsampling could be an option for this project, but let’s see if the results are well in the end without using such a technique.
+We can see that the dataset is slightly imbalanced that there are 700 more water samples not potable than those potable, but there are almost 400 more missing values for not drinkable water than drinkable water. Downsampling could be an option for this project, but let’s see if the results are well in the end without using such a technique.
 
 ```r
 # Potability column should be a factor rather than a numeric one.
@@ -117,11 +112,11 @@ wq %>% group_by(Potability) %>%
  facet_wrap(~features, scales = "free")
 ```
 
-Now we can see some salient differences among the features between the two types of water. The minimum values of `Chloramines`, `Hardness`, `Organic_carbon` and `Sulfate` are much higher in non-potabile water than in potabile water.
+Now we can see some salient differences among the features between the two types of water. The minimum values of `Chloramines`, `Hardness`, `Organic_carbon` and `Sulfate` are much higher in non-potable water than in potabile water.
 
 ### PCA {#pca}
 
-Since this is a binary-classification problem with 9 potential features, using PCA in the first place to give some plots would help us understand the problem better.
+Since this is a binary-classification problem with 9 potential features, using PCA in the first place to lower dimensions and then give some plots would help us understand the problem better.
 
 ```r
 # Applying PCA and data viz
@@ -136,7 +131,7 @@ x2 %>% mutate(
 
 Based on the plot above, it seems like there is no an obvious pattern to differentiate the classes.
 
-Now, we use three machine learning algorithms on this very dataset and see how they perform. First off, it is intuitive to use logistic regression.
+Now, we use three machine learning algorithms on this very dataset and see how they perform. First off, it is intuitive to use logistic regression, as it is a classical binary-classification problem.
 
 ### Logistic Regression {#logistic-regression}
 
@@ -376,4 +371,4 @@ It turned out that the subset of features being fed into the random forest model
 
 ## Conclusion {#conclusion}
 
-In terms of prediction accuracy, none of the algorithms we tried have stood out, and all of the accuracies are below 70%. Random forest seems like to perform the best, but it is only slightly better than svm with the radial kernel.
+In terms of prediction accuracy, none of the algorithms we tried have stood out, and all of the accuracies are below 70%. Random forest seems like to perform the best, but it is only slightly better than svm with the radial kernel. In order to improve the performance, there are two parts we can do. One is to continue to use the current algorithms, but parameters should be tuned further. The other one is to use a more complicated machine learning algorithm such as neural network to train and test the dataset.

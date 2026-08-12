@@ -1,16 +1,11 @@
 URL: https://youzhi.netlify.app/post/2021-08-09-summarize-vs-summarize/summarize-vs-summarise/
-Title: Summarize Vs Summarise
+Title: dplyr::summarize() V.S. dplyr::summarise()
+Date: 2021-08-09
 ---
-
-# dplyr::summarize() V.S. dplyr::summarise()
-
-#### Y. Yu
-
-#### 2021-08-09
 
 ## Background Introduction {#background-introduction}
 
-As an avid R user for years, I’ve been using `tidyverse` ecosystem to do my data science work daily and from time to time would come across something new from the tools I use all the time. Last night, as I was building up one of my shiny apps/dashboards by adding test of association of tweets collected from different sampling methods, I found out one of the differences between `dplyr::summarize()` and `dplyr::summarise()`.
+As an avid R user for years, I’ve been using `tidyverse` ecosystem to do my data science work daily and from time to time would come across something new from the tools I use frequently. Last night, as I was building up one of my shiny apps/dashboards by adding test of association of tweets collected from different sampling methods, I found out one of the differences between `dplyr::summarize()` and `dplyr::summarise()`.
 
 In order to get correlations and p-values, I used a function `rcorr()` from `library(Hmisc)`. When I added this function into my shiny app, it did not work as it should and my dashboard gave me some strange error message. To better illustrate my points, using `mtcars` dataset would shed some light on what I would like to convey.
 
@@ -34,7 +29,7 @@ mtcars %>% group_by(gear, carb) %>%
 ## Error in mean(disp): object 'disp' not found
 ```
 
-After searching on stackoverflow and github, I found out this [link](https://github.com/tidyverse/dplyr/issues/505), which amazed me in a way that I found out a difference between `dplyr::summarize` and `dplyr::summarise`. To me, they were just the American and British spelling and the code would be doing the same job no matter which one we use, but after I changed `z` to `s` for the snippet code, I ended up having the following correct results. Pretty amazing, right?
+After searching on stackoverflow and github, I found out this [link](https://github.com/tidyverse/dplyr/issues/505), which amazed me in a way that I found out a difference between `dplyr::summarize()` and `dplyr::summarise()`. To me, they were just the American and British spelling and the code would be doing the same job no matter which one we use, but after I changed `z` to `s` for the snippet code, I ended up having the following correct results. Pretty amazing, right?
 
 ```r
 mtcars %>% group_by(gear, carb) %>%
@@ -69,4 +64,4 @@ mtcars %>% group_by(gear, carb) %>%
 
 ## Conclusion {#conclusion}
 
-I guess besides spelling difference, there is some underlying structural variations between `summarise()` and `summarize()`. Part of the reason why I like data science and do research work in this field enthusiastically is that I always encounter strange errors, some of which are not solved even after checking all components associated with them, but seeing questions and answers posted by people in this collegial community would always give me the right guidance to solving the problems I encounter at any moment. Through conferring and researching the technical questions/problems, I can consistently sharpen my data science tools.
+I guess besides spelling difference, there is some underlying structural variations between `summarise()` and `summarize()`. Maybe this is a simple note, but sometimes when using `summarize()` and some strange errors take place, simply changing it to `summarise()` can sometimes magically solve the issue. Part of the reason why I like data science and do research work in this field enthusiastically is that I always encounter strange errors, some of which are not solved even after checking all components associated with them, but seeing questions and answers posted by people in this collegial community would always give me the right guidance to solving the problems I encounter at any moment. Through conferring and researching the technical questions/problems, I can consistently sharpen my data science tools.
