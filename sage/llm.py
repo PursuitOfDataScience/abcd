@@ -27,13 +27,32 @@ _RETRYABLE = {"rate_limit", "network", "unavailable"}
 # a model, a quota or an API key. Which of several backends ran out of credit is
 # not something a reader of a blog can act on, and `engine.run_conversation` has
 # already tried the others by the time any of this is shown.
+#
+# That last clause is why the first four say the same thing. By the time any of them
+# reaches a reader the whole ladder has refused, so the four causes have collapsed
+# into one situation with one useful response, and distinguishing them in the text
+# could only be done by naming the thing that is spent. "Busy right now, please wait
+# a moment" was worse than dry: on a free tier whose cap is measured in hours it was
+# not true, and it read as the panel being broken. The details panel and the log
+# still carry the exact cause for whoever is fixing it.
+#
+# Deliberately lighter than the rest of the site's register, which is the owner's
+# call: the reader has been told no through no fault of their own, and a warm sentence
+# lands better there than a status code. `context`, `network` and `unknown` stay plain,
+# because each names something the reader can actually act on and a joke would be in
+# the way of it.
+EXHAUSTED = (
+    "Even a well-read assistant needs a tea break. \U0001f375 "
+    "Please try again a little later."
+)
+
 _MESSAGES = {
-    "auth": "The assistant is not available right now. Please try again later.",
-    "rate_limit": "The assistant is busy right now. Please wait a moment and retry.",
-    "quota": "The assistant is not available right now. Please try again later.",
+    "auth": EXHAUSTED,
+    "rate_limit": EXHAUSTED,
+    "quota": EXHAUSTED,
+    "unavailable": EXHAUSTED,
     "context": "This conversation got too long. Clear it and ask again.",
     "network": "Could not reach the assistant. Check the connection and retry.",
-    "unavailable": "The assistant is temporarily unavailable. Please retry shortly.",
     "unknown": "Something went wrong. Please try again.",
 }
 
