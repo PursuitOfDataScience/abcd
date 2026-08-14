@@ -53,7 +53,7 @@ Over the whole period this adds up to 25,888 gibibyte-hours of memory reserved a
 
 The two resources punish a bad guess very differently, and that difference is why the two bars in Figure 1 look nothing like each other.
 
-A job given too few cores runs slowly and finishes. A job given too little memory is killed, and it is killed late: the run looks healthy for an hour, then its memory spikes once and the scheduler destroys it. Over the period, 12 of the 4,950 jobs died that way, 0.24 %. In four of the twelve the recorded peak was at or above ninety per cent of the request, so the request had simply been cut too fine. In the other eight the accounting shows a peak well inside the limit or no peak at all, meaning the fatal spike happened between two samples and was never recorded.
+A job given too few cores runs slowly and finishes. A job given too little memory is killed, and it is killed late: the run looks healthy for an hour, then its memory spikes once and the scheduler destroys it. Over the period, 12 of the 4,950 jobs died that way, 0.24 %. In four of the twelve the recorded peak was at or above ninety per cent of the request, so the request had simply been cut too fine. In the other eight it shows a peak inside the limit, or no peak at all, meaning the fatal spike happened between two samples and was never recorded.
 
 So the incentives are asymmetric. Asking for too little memory destroys hours of work; asking for too much costs nothing anyone will ever mention. Any process optimising against what it can observe will over-request, and it is locally right to.
 
@@ -86,7 +86,7 @@ The clearest single case is the video-transcoding row. That job asked for sixtee
 
 Two things were introduced during the period, six days apart, and the order is the argument of this article.
 
-The first was a written rule, placed in the configuration file every session reads: size every request so that actual usage approaches ninety per cent of it, and never round the number up for comfort. The 1.4-times-the-peak marker in the figures is that same rule restated for a single reading. It was added after four separate complaints arrived in a single day, and by the end of that day it had acquired a blunt sentence that is still there. Memory is *“the one I keep over-requesting; STOP defaulting to 32/48/96G to be safe.”* At that stage the rule named `MaxRSS` as the way to measure, which is to say it named one of the two numbers that read high.
+The first was a written rule, placed in the configuration file every session reads: size every request so that actual usage approaches ninety per cent of it, and never round the number up for comfort. The 1.4-times-the-peak marker in the figures is that same rule restated for a single reading. It was written on the second day of complaints, and by that evening, after two more had arrived, it had acquired a blunt sentence that is still there. Memory is *“the one I keep over-requesting; STOP defaulting to 32/48/96G to be safe.”* At that stage the rule named `MaxRSS` as the way to measure, which is to say it named one of the two numbers that read high.
 
 The second changed the instrument. A slurmwatch reading became mandatory for every job, the four numbers to read were named, and the older measurement was explicitly superseded. The operative sentence is *“take a telemetry snapshot and right-size from the real numbers (don’t guess, don’t pad)”*, followed by an instruction to cancel the job and resubmit it if the reading disagrees with the request.
 
@@ -120,7 +120,7 @@ It is tempting to read all of this as a shortcoming of one tool, fixable with a 
 
 **The answer is not in the code.** How much memory a program needs depends on the data it is given, the libraries it links, how much file content the kernel decides to cache, and how many worker processes a framework happens to start. None of that is visible in the source. The video encoder that saturates at five cores looks, in its invocation, exactly like one that would use sixteen.
 
-**Success reports nothing.** A job that completes gives back no information about its footprint. A request is written, the job succeeds, and the next request is written by the same reasoning that produced the last one. Nine complaints over the period came from a human reading a dashboard, not from anything Claude Code could have noticed by itself. Seven of the nine arrived in the first three days, which is what a standing instruction is good for; the last two, much later, are what an instruction alone does not reach.
+**Success reports nothing.** A job that completes gives back no information about its footprint. A request is written, the job succeeds, and the next request is written by the same reasoning that produced the last one. Every correction in this record came from a human reading a dashboard, not from anything Claude Code could have noticed by itself. They cluster in the first three days, which is what a standing instruction is good for, and then recur weeks apart, which is what an instruction alone does not reach.
 
 **The easy measurements pointed the wrong way**, as Figure 2 showed. This is the reason Figure 4 falls in two stages: the written rule removed the round numbers, and slurmwatch removed the remaining factor of two.
 
@@ -128,7 +128,7 @@ What closed the gap was making one reading mandatory and naming the four numbers
 
 ## Limitations {#limitations}
 
-The all-jobs figures for memory rest on Slurm’s `MaxRSS`, which this article has just spent a section criticising. That is unavoidable: it is the only memory figure retained for all 4,950 jobs. Its bias runs one way, and the direction matters. Because `MaxRSS` reads high, the percentages in Figure 1 are upper bounds and the multiples elsewhere are lower bounds. The real gap is wider than reported here, not narrower. Where a slurmwatch figure exists, in Figures 2 and 3, it is used instead.
+The all-jobs figures for memory rest on Slurm’s `MaxRSS`, which this article has just spent a section criticising. That is unavoidable: it is the only memory figure Slurm retains for every job. Its bias runs one way, and the direction matters. Because `MaxRSS` reads high, the percentages in Figure 1 are upper bounds and the multiples elsewhere are lower bounds. The real gap is wider than reported here, not narrower. Where a slurmwatch figure exists, in Figures 2 and 3, it is used instead.
 
 The 21 measured jobs are not a random sample. They are the jobs somebody thought worth watching, which biases them toward long, expensive and suspicious runs.
 
