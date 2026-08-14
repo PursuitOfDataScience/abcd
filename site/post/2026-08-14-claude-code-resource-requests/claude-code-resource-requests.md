@@ -7,15 +7,17 @@ Every job submitted to an HPC cluster begins with a guess. The submission script
 
 [Claude Code](https://www.anthropic.com/claude-code) makes those guesses plausibly enough that nobody checks them. It writes correct submission scripts, chains dependent jobs, and diagnoses a failed run from its log. The resource request is the one part it gets consistently and substantially wrong, and it has no way of finding out.
 
-This article measures how wrong, using every job Claude Code submitted on a university cluster during a sustained stretch of machine-learning and data-processing work. It then shows what fixed it, which was not a better prompt but an instrument: [slurmwatch](https://youzhi.netlify.app/post/2026-08-03-slurmwatch/slurmwatch/), a tool that reads a running job’s real usage off the compute node.
+This article measures how wrong, using every job Claude Code submitted on a university cluster during a sustained stretch of machine-learning and data-processing work. The short version is that the typical job used about an eighth of the memory it reserved and half the cores. It then shows what fixed that, which was not a better prompt but an instrument: [slurmwatch](https://youzhi.netlify.app/post/2026-08-03-slurmwatch/slurmwatch/), a tool that reads a running job’s real usage off the compute node.
 
-## The two numbers this article compares {#the-two-numbers-this-article-compares}
+## The numbers this article compares {#the-numbers-this-article-compares}
 
-Everything below is one comparison, applied to two resources. It is worth stating in plain terms before any chart appears.
+Everything below is one comparison, applied to two resources and, more briefly, to a third. It is worth stating in plain terms before any chart appears.
 
 **Memory.** The request is the `--mem` line in the submission script: `--mem=96G` reserves 96 gibibytes. The usage is the highest the job’s memory actually reached at any moment while it ran. If a job asks for 96 and peaks at 6, it held 90 gibibytes that nothing used.
 
-**CPU cores.** The request is `--cpus-per-task`: `--cpus-per-task=8` reserves eight cores. The usage is how many of those cores were genuinely busy. A single-threaded program given eight cores uses one and leaves seven idle.
+**CPU cores.** The request is `--cpus-per-task`: `--cpus-per-task=8` reserves eight cores. The usage is how many of those cores were genuinely busy. A single-threaded program given eight cores uses one and leaves seven idle. This figure is often fractional, and that is not an error: 0.4 cores means the job kept one core busy about forty per cent of the time.
+
+**The time limit**, thirdly and less importantly. The request is `--time`, and the usage is how much of it the job needed. Over-requesting time does not hold capacity away from anybody, so it costs far less than the other two, but it is measured here because it comes from the same habit.
 
 Both are reported here as a percentage (“this job used 13 % of the memory it requested”) or as a multiple (“this job was given 8 times the cores it used”). Those are the same fact in two directions.
 
@@ -43,9 +45,11 @@ Job names, script names and project names are omitted throughout; workloads are 
 
 ## How much of each request was used {#how-much-of-each-request-was-used}
 
-[figure: Jobs that ran at least two minutes, excluding synthetic test jobs written to exercise a monitoring tool.] Figure 1: Jobs that ran at least two minutes, excluding synthetic test jobs written to exercise a monitoring tool.
+[figure: Jobs that ran at least two minutes, excluding synthetic test jobs written to exercise a monitoring tool. A long time limit is much cheaper to get wrong than a large memory request, so the bottom bar should be read as the same habit rather than the same cost.] Figure 1: Jobs that ran at least two minutes, excluding synthetic test jobs written to exercise a monitoring tool. A long time limit is much cheaper to get wrong than a large memory request, so the bottom bar should be read as the same habit rather than the same cost.
 
 The green block on the CPU bar is worth reading carefully, because it is not luck. Almost all of it is small single-core tasks that asked for one core and kept it busy, which is the request being made correctly. The red and orange at the other end of the same bar are the memory error on a smaller scale: four, six or eight cores requested for work that used one.
+
+The time limit is the loosest of the three and the least worth worrying about. Nearly three jobs in five finished inside a tenth of the time they had asked for. A generous limit mostly costs queue position, because a shorter request can slip into gaps in the schedule that a long one cannot, and on a chain of jobs that resume each other a long limit is deliberate. Five jobs in the whole record were killed for running past their limit, against twelve killed for running out of memory.
 
 Over the whole period this adds up to 25,888 gibibyte-hours of memory reserved against a peak demand of 10,696, and 3,473 core-hours reserved against 963 consumed. A gibibyte-hour is one gibibyte held for one hour, so those are totals of reserved capacity over time rather than counts of jobs. Both understate the problem, for the reason the next two sections give.
 
@@ -80,7 +84,7 @@ One line in three of the figures that follow needs explaining first. The dashed 
 
 [figure: Behind the top row, 7.84 GiB was reserved for a job that needed 0.05. The six rows that reach the memory target are all three-GPU training runs from one pipeline, the only request here that had been cut to fit a measurement.] Figure 3: Behind the top row, 7.84 GiB was reserved for a job that needed 0.05. The six rows that reach the memory target are all three-GPU training runs from one pipeline, the only request here that had been cut to fit a measurement.
 
-The clearest single case is the video-transcoding row. That job asked for sixteen cores and six gibibytes. A slurmwatch reading taken 38 seconds into the run showed 6.0 cores busy and a memory peak of 857 megabytes: 38 % of the cores and 14 % of the memory. It was cancelled and resubmitted with eight cores and two gibibytes. The second reading showed 5.0 cores busy of the eight, and a memory peak of 0.61 gibibytes of the 1.96 it now held: 63 % of the cores and 31 % of the memory. The encoder had never been capable of using sixteen cores; it saturates at five or six however many it is given. No amount of reading the code would have produced that number, and the whole exchange cost about a minute of lost encoding.
+The clearest single case is the video-transcoding row. That job asked for sixteen cores and six gibibytes. A slurmwatch reading taken 38 seconds into the run showed 6.0 cores busy and a memory peak of 857 megabytes: 38 % of the cores and 14 % of the memory. It was cancelled and resubmitted with eight cores and two gibibytes. The second reading showed 5.0 cores busy of the eight, and a memory peak of 0.61 gibibytes of the 1.96 it now held: 63 % of the cores and 31 % of the memory. The encoder had never been capable of using sixteen cores; it saturates at five or six however many it is given. No amount of reading the code would have produced that number, and the whole exchange cost about a minute of lost encoding. The same array had also been placed on GPU nodes despite needing no GPU, which is a placement error rather than a sizing one, and was caught by looking at where the jobs had landed rather than by any reading of them.
 
 ## Instruction first, then instrumentation {#instruction-first-then-instrumentation}
 
@@ -113,6 +117,12 @@ Neither is an argument against measuring. Both are an argument for measuring a j
 The GPU jobs in the middle group were watched: long, expensive, few in number, and a reading was taken while they ran. The CPU-only campaigns on the right were not, and their two bars diverge for a reason that has nothing to do with effort. A single-core task obviously needs one core, so the core request can be got right without measuring anything. Nothing about a job’s behaviour reveals its memory peak, so the memory request stays a round guess.
 
 This is the point of the whole exercise. The rule applied to every job in Figure 6. It was not being ignored. There was simply no reading to size against, and without one the instruction to avoid over-requesting collides with the instruction to avoid killing the run. The second wins, correctly, every time.
+
+## The costliest version of the same mistake {#the-costliest-version-of-the-same-mistake}
+
+slurmwatch’s other two numbers are about the GPU, and they answer a question that memory and cores cannot: did the job need the accelerator it was given at all? Of the thirteen measured jobs with a usable GPU reading, three were holding a card whose memory was more than ninety-five per cent empty, and reporting no activity on it either. On this cluster a GPU is the scarcest thing a job can reserve, so that is the same error as a 96 GiB memory request, made against the expensive resource.
+
+That reading needs more care than the memory one, and the record contains the trap. One job showed ninety-three per cent of its cards’ memory occupied and zero activity, which looks like the same failure and is not: it was a training run that completed its full slice normally, caught by the snapshot at an idle instant. A card whose memory is almost empty is unambiguous. A card that merely looks idle may just need looking at again a few minutes later. The companion article works through that distinction and the tuning it leads to; this one stops at the request.
 
 ## Why an instrument and not a better prompt {#why-an-instrument-and-not-a-better-prompt}
 
