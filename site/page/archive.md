@@ -8,13 +8,13 @@ Every article published on the site, counted by year and listed by title.
 
 ## How many
 
-**117 articles in total**, published from 2021 to 2026.
+**118 articles in total**, published from 2021 to 2026.
 
 By year:
 
 - **2021**: 56 articles
 - **2022**: 52 articles
-- **2026**: 9 articles
+- **2026**: 10 articles
 
 Nothing was published in 2023, 2024, 2025.
 
@@ -22,6 +22,7 @@ Nothing was published in 2023, 2024, 2025.
 
 ### 2026
 
+- *Claude Code Over-Requests HPC Resources: Measuring the Gap, and Closing It with Live Telemetry* (2026-08-14)
 - *Counting Artificial Intelligence in 51.9 Million Job Postings: Measurement, Rotation, and Firm Adoption* (2026-08-11)
 - *A Repeat-Rent Index From Rental Listings: External Validation and a Falsified Explanation for Its Level Bias* (2026-08-09)
 - *Pay-Transparency Mandates in 51.9 Million Job Postings: Measurement, Within-Firm Evidence, and Spillover* (2026-08-09)
