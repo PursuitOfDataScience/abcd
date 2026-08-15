@@ -141,7 +141,7 @@ def revision(profile: Profile) -> str:
         # with nothing looking wrong. `resolve` no longer takes the corpus on trust
         # either; it checks the bytes against this digest.
         response = httpx.get(
-            _url("corpus.sha256"), timeout=config.SITE_CORPUS_TIMEOUT,
+            _url("corpus.sha256"), timeout=config.SITE_DIGEST_TIMEOUT,
             headers={"Cache-Control": "no-cache"}, follow_redirects=True,
         )
         response.raise_for_status()

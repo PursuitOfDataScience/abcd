@@ -223,6 +223,15 @@ SITE_CORPUS_URL = os.getenv(
 )
 SITE_CORPUS_CACHE = os.getenv("SAGE_SITE_CORPUS_CACHE", "/tmp/sage-corpus")
 SITE_CORPUS_TIMEOUT = _env_float("SAGE_SITE_CORPUS_TIMEOUT", 20.0)
+# The digest gets its own, much shorter budget, because the two requests are waited on
+# by different people. The corpus is a megabyte and is fetched once per revision, on a
+# start-up where nobody is mid-sentence. The digest is 65 bytes and is fetched inside a
+# rerun, every `SITE_CORPUS_POLL_SECONDS`, while a reader waits for their answer: on the
+# 20s corpus budget an unreachable host would freeze the panel for twenty seconds before
+# doing what it was always going to do, which is serve the index it already has. It was
+# measured at ~85ms against Netlify, so five seconds is roughly sixty times the observed
+# cost and still fails fast enough that nobody notices.
+SITE_DIGEST_TIMEOUT = _env_float("SAGE_SITE_DIGEST_TIMEOUT", 5.0)
 # 600s: a new article appears within ten minutes of the website deploying it, at the
 # cost of one 65-byte request per ten minutes per process.
 SITE_CORPUS_POLL_SECONDS = _env_int("SAGE_SITE_CORPUS_POLL_SECONDS", 600)
