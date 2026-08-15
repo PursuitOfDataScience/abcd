@@ -214,6 +214,19 @@ REQUEST_RETRIES = _env_int("SAGE_REQUEST_RETRIES", 2)
 SITE_PATH = os.getenv("SAGE_SITE_PATH", "./site")
 SITE_BASE_URL = os.getenv("SAGE_SITE_BASE_URL", "https://youzhi.netlify.app/")
 
+# Where the website publishes its corpus, and how often to ask whether it changed.
+# The deployment has no corpus of its own: it fetches this one, so a new article is
+# live once the website is, with no second push to the deployed build. See
+# `sage/corpus_source.py` for why there is no fall back to a stale copy.
+SITE_CORPUS_URL = os.getenv(
+    "SAGE_SITE_CORPUS_URL", SITE_BASE_URL.rstrip("/") + "/assistant"
+)
+SITE_CORPUS_CACHE = os.getenv("SAGE_SITE_CORPUS_CACHE", "/tmp/sage-corpus")
+SITE_CORPUS_TIMEOUT = _env_float("SAGE_SITE_CORPUS_TIMEOUT", 20.0)
+# 600s: a new article appears within ten minutes of the website deploying it, at the
+# cost of one 65-byte request per ten minutes per process.
+SITE_CORPUS_POLL_SECONDS = _env_int("SAGE_SITE_CORPUS_POLL_SECONDS", 600)
+
 # The source list, extensions, weights and exclusion lists that used to sit here
 # belonged to a corpus this repository does not contain. They live on the profile
 # now (`sage/profile.py`), and the defaults left behind had no callers.

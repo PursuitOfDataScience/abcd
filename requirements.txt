@@ -41,9 +41,13 @@
 # forced a rebuild.
 streamlit>=1.42,<2
 mistralai>=1.0,<2
-# OpenCode Zen and any other OpenAI-compatible endpoint are called over plain
-# HTTP. mistralai pulls httpx in anyway; declared because sage/providers.py
-# imports it directly.
+# OpenCode Zen and any other OpenAI-compatible endpoint are called over plain HTTP,
+# and `sage/corpus_source.py` fetches the corpus the deployment answers from. That
+# second one is why this line is not a formality: the app used to carry its corpus and
+# could boot with no network at all, and now it cannot start without this. mistralai
+# pulls httpx in transitively, which is exactly the reasoning that would justify
+# dropping the line, and dropping it would leave the deployment one dependency
+# resolution away from importing nothing and citing nothing.
 httpx>=0.27
 # pypdf and pymupdf are NOT here. They serve the file-upload path only, which is
 # off unless a deployment sets SAGE_UPLOADS, and PyMuPDF alone is a 24.6 MB wheel,
@@ -52,4 +56,4 @@ httpx>=0.27
 # they are absent. To enable uploads:
 #
 #     pip install -r requirements.txt -r requirements-uploads.txt
-# sage modules + corpus: fb12bac18a0ffa86
+# sage modules: 214a11728e52fee5

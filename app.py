@@ -21,6 +21,7 @@ from sage import (
     cite,
     config,
     context,
+    corpus_source,
     engine,
     feedback,
     files,
@@ -300,9 +301,38 @@ components.html(f"<script>{load_asset('app.js')}</script>", height=0)
 # --- resources -------------------------------------------------------------
 
 
-@st.cache_resource(show_spinner=PROFILE.index_spinner)
-def get_index() -> Index:
-    built = corpus_mod.build(profile=PROFILE)
+@st.cache_data(ttl=config.SITE_CORPUS_POLL_SECONDS, show_spinner=False)
+def corpus_revision() -> str:
+    """A token that changes when the corpus does; the index's cache key.
+
+    Polled rather than pushed, because the corpus is published by the website now
+    and nothing tells this process when that happened. Cheap enough to poll: the
+    digest is 65 bytes.
+    """
+    return corpus_source.revision(PROFILE)
+
+
+# `max_entries=1` because the revision is a cache key now, and a cache key that changes
+# is a cache that grows. This function took no arguments until the corpus moved out of
+# the deployment, so one index existed for the life of the container and the only way to
+# get another was a redeploy, which replaced the container anyway. Keyed on the digest,
+# every content push leaves an index behind: measured at 11.9 MB for 121 documents and
+# 652 chunks, retained for as long as the process lives, and the keepalive workflow
+# exists precisely to make that a long time. Only the current revision is ever wanted,
+# which is the same conclusion `corpus_source._forget_other_revisions` reached about the
+# copies on disk; this is that decision applied to memory.
+@st.cache_resource(show_spinner=PROFILE.index_spinner, max_entries=1)
+def get_index(revision: str) -> Index:
+    try:
+        paths, origin = corpus_source.resolve(PROFILE, revision)
+    except corpus_source.CorpusUnavailable as exc:
+        st.error(
+            f"**The `{PROFILE.key}` corpus could not be loaded.** {exc}. The "
+            "assistant cannot answer anything until it can read the articles."
+        )
+        st.stop()
+    logger.warning("Corpus origin: %s (%s)", origin, revision)
+    built = corpus_mod.build(sources=paths, profile=PROFILE)
     index = Index(built)
     # The profile is named here, at WARNING, because it is the one fact you need
     # from a deployment's logs to know it came up as the assistant you meant. At
@@ -313,7 +343,7 @@ def get_index() -> Index:
     if not built.chunks:
         st.error(
             f"**The `{PROFILE.key}` corpus is empty.** Nothing was found under "
-            f"{', '.join(sorted(PROFILE.paths.values()))}. The assistant would "
+            f"{', '.join(sorted(paths.values()))}. The assistant would "
             "answer every question with 'not covered'."
         )
         st.stop()
@@ -382,7 +412,7 @@ if not READY:
     )
     st.stop()
 
-INDEX = get_index()
+INDEX = get_index(corpus_revision())
 CORPUS = INDEX.corpus
 
 
