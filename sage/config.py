@@ -73,7 +73,7 @@ def _env_list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
 # serves it, because Zen's free lineup rotates without notice and offering a model
 # that has been withdrawn is a button that returns a 404. When it is gone the first
 # model Zen does serve is used instead.
-DEFAULT_MODEL = os.getenv("SAGE_DEFAULT_MODEL", "opencode:nemotron-3.5-lightning-free")
+DEFAULT_MODEL = os.getenv("SAGE_DEFAULT_MODEL", "opencode:hy3-free")
 
 MISTRAL_MODELS = _env_list(
     "SAGE_MISTRAL_MODELS",
@@ -90,13 +90,25 @@ OPENCODE_BASE_URL = os.getenv("OPENCODE_BASE_URL", "https://opencode.ai/zen/v1")
 # discovery does return (`OpenAICompatProvider._order`). So it decides which model a
 # failover lands on, and a name in the wrong place here is a reader's wait.
 #
-# Checked against the endpoint on 2026-08-12. `north-mini-code-free` and
-# `longcat-2.0-free` are no longer served and are gone; `nemotron-3.5-lightning-free`
-# is new and leads the list, which is also `DEFAULT_MODEL`: the two have to agree, or a
-# failover walks back to a model the walk had already started on.
+# Checked against the endpoint on 2026-08-12, and re-measured on 2026-08-15 by asking
+# every model on the list "what can you do?" with this deployment's own system prompt.
+# `north-mini-code-free` and `longcat-2.0-free` are no longer served and are gone.
 #
-# `hy3-free` sits high because it is the one that carried this deployment while the
-# three above it were rate limited, answering with seven cited sources in 44s.
+# `hy3-free` leads, which is also `DEFAULT_MODEL`: the two have to agree, or a failover
+# walks back to a model the walk had already started on. It is the one that carried this
+# deployment while the models above it were rate limited, and on the re-measurement it
+# answered in 13s with its reasoning kept properly in `delta.reasoning`, where nothing
+# shows it.
+#
+# `nemotron-3.5-lightning-free` led this list until 2026-08-15 and was the default, and
+# it was the wrong choice twice over. Asked anything it can answer without a tool, it
+# reasons until the token cap and never reaches an answer: 41 seconds, 1,766 reasoning
+# deltas, and then the gateway flushes all 8,006 characters of the scratchpad into one
+# `content` delta, which is what a reader saw, cut off mid-word. `parse_sse` now drops
+# content identical to the reasoning, so that no longer reaches anyone, but what is left
+# is 41 seconds of nothing and a round that then wrote `search_docs("archive")` as prose
+# instead of calling the tool. It stays on the list because the lineup rotates, and it is
+# below everything that answers.
 #
 # `nemotron-3-ultra-free` is last on evidence rather than on taste. It is a reasoning
 # model that streams its thinking in `delta.reasoning` and never fills `delta.content`
@@ -109,12 +121,12 @@ OPENCODE_BASE_URL = os.getenv("OPENCODE_BASE_URL", "https://opencode.ai/zen/v1")
 OPENCODE_MODELS = _env_list(
     "SAGE_OPENCODE_MODELS",
     (
-        "nemotron-3.5-lightning-free",
         "hy3-free",
+        "laguna-s-2.1-free",
         "deepseek-v4-flash-free",
         "big-pickle",
         "mimo-v2.5-free",
-        "laguna-s-2.1-free",
+        "nemotron-3.5-lightning-free",
         "ling-3.0-tiny-free",
         "nemotron-3-ultra-free",
     ),

@@ -263,8 +263,29 @@ class OpenAICompatProvider:
             yield from parse_sse(response.iter_lines())
 
 
+#: Where a reasoning model puts its scratchpad. Read only so that it can be recognised
+#: if it turns up again in `content`; never shown, and never part of an answer.
+_REASONING_KEYS = ("reasoning", "reasoning_content", "thinking")
+
+
 def parse_sse(lines: Iterator[str]) -> Iterator[Chunk]:
-    """Turn an OpenAI-style `data:` event stream into Chunks."""
+    """Turn an OpenAI-style `data:` event stream into Chunks.
+
+    Content that is the model's own thinking is dropped, because a reader was shown it.
+
+    `nemotron-3.5-lightning-free` streams its reasoning in `delta.reasoning`, which this
+    ignores, and that is fine right up until the reasoning runs the round out of tokens
+    before an answer exists. At that point the gateway flushes the whole scratchpad into
+    a single `content` delta, and it becomes the answer: measured on the question "what
+    can you do?", 1,766 reasoning deltas followed by one content delta carrying all 8,006
+    characters of them, so a reader got "Here's a thinking process:" and a numbered
+    analysis of the system prompt, cut off mid-word at the token cap.
+
+    Identity is the test, not a guess at what thinking looks like. A model that answers
+    does not emit an answer byte-identical to everything it just thought; one that does
+    has produced no answer, and saying so lets the ladder move to a model that will.
+    """
+    thought: list[str] = []
     for raw in lines:
         line = raw.strip() if isinstance(raw, str) else raw.decode().strip()
         if not line or not line.startswith("data:"):
@@ -281,8 +302,20 @@ def parse_sse(lines: Iterator[str]) -> Iterator[Chunk]:
         if not choices:
             continue
         delta = choices[0].get("delta") or {}
+        for key in _REASONING_KEYS:
+            piece = _flatten(delta.get(key))
+            if piece:
+                thought.append(piece)
+        text = _flatten(delta.get("content"))
+        if text and thought and text == "".join(thought):
+            logger.warning(
+                "Dropping %d characters of content identical to the model's own "
+                "reasoning: it thought until it ran out of room and never answered.",
+                len(text),
+            )
+            text = ""
         yield Chunk(
-            text=_flatten(delta.get("content")),
+            text=text,
             tool_calls=_tool_fragments(delta.get("tool_calls")),
         )
 
