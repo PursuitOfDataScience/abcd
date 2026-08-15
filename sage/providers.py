@@ -313,14 +313,20 @@ def parse_sse(lines: Iterator[str]) -> Iterator[Chunk]:
                 thought.append(piece)
         text = _flatten(delta.get("content"))
         calls = _tool_fragments(delta.get("tool_calls"))
-        if text and not diverged and thought:
+        if text and not diverged:
             # Hold content back only while it is still tracking the reasoning. A real
             # answer stops matching at its first character, so it is released at once
             # and streams as it always did; a scratchpad being replayed keeps matching
             # to the end. Buffering rather than comparing one delta at a time is what
             # makes this independent of how the gateway happens to chunk the dump.
+            #
+            # `thought` being empty falls through to the release below rather than
+            # skipping the block, and that matters: a delta that arrives before any
+            # reasoning is real text, and once real text has gone out this stream is not
+            # a replay of anything. Leaving `diverged` unset there meant a later delta
+            # could still be held and swallowed after the reader had already seen words.
             candidate = "".join(held) + text
-            if "".join(thought).startswith(candidate):
+            if thought and "".join(thought).startswith(candidate):
                 held.append(text)
                 if calls:
                     yield Chunk(text="", tool_calls=calls)
