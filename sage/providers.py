@@ -286,13 +286,18 @@ def parse_sse(lines: Iterator[str]) -> Iterator[Chunk]:
     has produced no answer, and saying so lets the ladder move to a model that will.
     """
     thought: list[str] = []
+    held: list[str] = []
+    diverged = False
     for raw in lines:
         line = raw.strip() if isinstance(raw, str) else raw.decode().strip()
         if not line or not line.startswith("data:"):
             continue
         body = line[len("data:") :].strip()
         if body == "[DONE]":
-            return
+            # `break`, not `return`: content held back below is released after the loop,
+            # and returning here threw it away. Every stream ends with this line, so the
+            # first version of this dropped a truncated answer every single time.
+            break
         try:
             event = json.loads(body)
         except json.JSONDecodeError:
@@ -307,17 +312,37 @@ def parse_sse(lines: Iterator[str]) -> Iterator[Chunk]:
             if piece:
                 thought.append(piece)
         text = _flatten(delta.get("content"))
-        if text and thought and text == "".join(thought):
+        calls = _tool_fragments(delta.get("tool_calls"))
+        if text and not diverged and thought:
+            # Hold content back only while it is still tracking the reasoning. A real
+            # answer stops matching at its first character, so it is released at once
+            # and streams as it always did; a scratchpad being replayed keeps matching
+            # to the end. Buffering rather than comparing one delta at a time is what
+            # makes this independent of how the gateway happens to chunk the dump.
+            candidate = "".join(held) + text
+            if "".join(thought).startswith(candidate):
+                held.append(text)
+                if calls:
+                    yield Chunk(text="", tool_calls=calls)
+                continue
+            diverged = True
+            text = candidate
+            held.clear()
+        yield Chunk(text=text, tool_calls=calls)
+
+    # The stream ended with content still tracking the reasoning. Identical means the
+    # model replayed its thinking instead of answering; a strict prefix means it was cut
+    # off partway, which is a poor answer but is the model's, so it is handed over.
+    if held:
+        shown = "".join(held)
+        if shown == "".join(thought):
             logger.warning(
-                "Dropping %d characters of content identical to the model's own "
+                "Dropped %d characters of content identical to the model's own "
                 "reasoning: it thought until it ran out of room and never answered.",
-                len(text),
+                len(shown),
             )
-            text = ""
-        yield Chunk(
-            text=text,
-            tool_calls=_tool_fragments(delta.get("tool_calls")),
-        )
+        else:
+            yield Chunk(text=shown, tool_calls=[])
 
 
 # --- registry --------------------------------------------------------------
