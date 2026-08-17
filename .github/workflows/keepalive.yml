@@ -1,28 +1,66 @@
-# Keeps the hosted app from going to sleep.
+# Makes sure the hosted app is awake, and wakes it when it is not.
 #
-# Streamlit Community Cloud suspends an app after roughly twelve hours without
-# traffic. Waking it is slow for a reason that has nothing to do with this code:
-# the container is rebuilt and the dependencies reinstalled before anything runs.
-# The app's own startup — importing the package, building the corpus and the BM25
-# index over 116 documents — is 1.2 seconds.
+# Streamlit Community Cloud discards an app's container after roughly twelve hours
+# without traffic. It does not suspend it: waking means rescheduling a container,
+# re-cloning this repository and reinstalling the dependencies before a line of the app
+# runs. Measured 2026-08-17, that took fourteen minutes, against an app whose own
+# startup is about 1.2 seconds. A reader who arrives during it is shown "check back in a
+# minute or two", so a wake that works is indistinguishable from one that does not.
 #
-# So the fix is to not let it sleep. A request every ten minutes is enough, and is
-# a far smaller load than the wake it prevents.
+# Two schedules, for two different jobs:
 #
-# Two honest caveats:
-#   * GitHub's scheduled runners are best-effort and often fire late, sometimes by
-#     ten or fifteen minutes. That is fine for a twelve-hour timeout.
-#   * Scheduled workflows are disabled automatically after sixty days without any
-#     commit to the repository. Re-enable it from the Actions tab if the app starts
-#     sleeping again.
+#   * The four-hourly one keeps the app from sleeping at all, which is the cheap outcome:
+#     nothing to wake, nobody waits.
 #
-# Delete this file to stop.
+#     Four hours, and NOT twelve, which is the interval this asks to be set to and the
+#     one value that cannot work: twelve hours is the timeout itself, so a ping on that
+#     period races the thing it is meant to prevent and loses whenever GitHub fires late,
+#     which it does by ten to thirty minutes as a matter of course and occasionally by
+#     dropping a run entirely. The margin is the whole point. At four hours a single
+#     missed run still leaves eight, and it takes two consecutive misses to reach twelve.
+#     This was `*/10` before, which GitHub throttled to roughly half-hourly anyway; four
+#     hours is a deliberate cut from about 48 runs a day to 7, with the margin kept.
+#
+#   * The morning one is the guarantee. It is a separate cron entry on purpose. GitHub
+#     throttles a `*/10` schedule hard (observed: roughly half-hourly, and 14 runs on a
+#     quiet day) and will drop runs under load, whereas a once-daily entry is the kind it
+#     honours. 11:30 UTC is 06:30 in Chicago on daylight time and 05:30 on standard, so
+#     it finishes the fourteen-minute cold start before anyone is reading either way.
+#     GitHub cron has no timezone, which is why this is stated in UTC and why the hour
+#     drifts with the season. That is harmless here and would not be if it were tighter.
+#
+# WHAT WENT WRONG WITH THE FIRST VERSION OF THIS FILE, kept because the shape of the
+# failure is worth more than the fix: it curled the app's root URL and could not fail.
+# Community Cloud answers that URL with a 303 into `share.streamlit.io/-/auth/app`, which
+# bounces back, so cookie-less `curl -L` died at 50 redirects with exit 47; `|| echo
+# "000"` swallowed that and the recorded code became the string `303000`. Every run from
+# the first to the last logged `-> 303000`, every one was green, and readers met a
+# sleeping app every morning for eight days. The URL was also wrong regardless: `/` is
+# served by the proxy and returns 200 with the React shell whether or not the app runs.
+#
+# So: the probe drives a real browser rather than fetching a URL, because a session is
+# the one thing a reader cannot be distinguished from, and nothing swallows a failure. A
+# run is red when the app is not serving, which is the entire point of running it.
+#
+# Caveats that still hold, in descending order of how much they should worry you:
+#   * Scheduled workflows are disabled automatically after sixty days with no commit to
+#     this repository, and this repository only receives commits when the assistant's
+#     code changes. That is this arrangement's expiry date. Re-enable from the Actions
+#     tab, or move the schedule to infrastructure without the rule.
+#   * GitHub's scheduled runners are best-effort and fire late.
+#   * Actions minutes are free here because this repository is public.
+#
+# No question is asked, so no model quota is spent. Delete this file to stop.
 
 name: keepalive
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    # Keep it awake, on a third of the twelve-hour timeout. See the note above on why
+    # this is not twelve.
+    - cron: '0 */4 * * *'
+    # And guarantee it is up before the morning, whatever the above managed.
+    - cron: '30 11 * * *'
   workflow_dispatch:
 
 permissions:
@@ -30,20 +68,30 @@ permissions:
 
 concurrency:
   group: keepalive
-  cancel-in-progress: true
+  # NOT cancel-in-progress. A wake from cold takes many minutes, and the next scheduled
+  # run would kill it partway: a keepalive that guarantees the app stays down.
+  cancel-in-progress: false
 
 jobs:
   ping:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 25
     steps:
-      - name: Request the app
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the browser
         run: |
-          set -uo pipefail
-          URL="https://yu-site-assistant.streamlit.app/"
-          # --max-time, because a sleeping app holds the connection open while it
-          # wakes and an unbounded curl would sit here for the whole job timeout.
-          # A non-2xx is not a failure worth a red tick: the point is the request,
-          # not the response, and a red X every ten minutes trains you to ignore it.
-          code=$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 90 "$URL" || echo "000")
-          echo "GET $URL -> $code"
+          python -m pip install --quiet playwright
+          python -m playwright install --with-deps chromium
+
+      # Every layer of state reading lives in the probe, so there is one account of what
+      # was found and it is the same one whether this runs here or by hand.
+      - name: Make sure the app is awake
+        env:
+          APP_URL: https://yu-site-assistant.streamlit.app
+          WAKE_BUDGET: '900'
+        run: python .github/keepalive_probe.py
