@@ -361,9 +361,14 @@ def resolve_api_key(provider: str) -> str:
 
 
 def configured_providers() -> list[str]:
-    """Providers that actually have a key, in preference order."""
-    return [name for name in (providers.MISTRAL, providers.OPENCODE)
-            if resolve_api_key(name)]
+    """Providers that actually have a key, in preference order.
+
+    The order is `providers.NAMES` and not a tuple written out here. It used to be a
+    literal, and the literal is what made adding a third provider a two-file change
+    with one file's worth of thought in it: this function decides the ladder, so a
+    provider missing from the tuple has a key, an adapter and no way of being reached.
+    """
+    return [name for name in providers.NAMES if resolve_api_key(name)]
 
 
 @st.cache_resource(show_spinner=False)
@@ -406,9 +411,10 @@ def available_models(name: str) -> list[providers.Model]:
 READY = configured_providers()
 if not READY:
     st.error(
-        "**No API key is set.** Provide `MISTRAL_API_KEY` and/or `OPENCODE_API_KEY` "
-        "in the environment or `.streamlit/secrets.toml`, then reload. "
-        "OpenCode Zen keys are free and start with `sk-zen-`."
+        "**No API key is set.** Provide `OPENROUTER_API_KEY`, `OPENCODE_API_KEY` "
+        "and/or `MISTRAL_API_KEY` in the environment or `.streamlit/secrets.toml`, "
+        "then reload. OpenRouter keys start with `sk-or-v1-` and its free router needs "
+        "no balance; OpenCode Zen keys are free and start with `sk-zen-`."
     )
     st.stop()
 

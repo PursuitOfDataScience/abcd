@@ -51,29 +51,122 @@ def _env_list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
 # model anyway. Starting here removes a wasted round trip from every question and
 # spends nothing.
 #
-# `nemotron-3.5-lightning-free`, by the owner's instruction of 2026-08-12, replacing
-# `deepseek-v4-flash-free` on the same authority. The measurements agree with the
-# instruction: on the day it was set, `deepseek-v4-flash-free` answered 429
-# `FreeUsageLimitError` to every request this key made, so opening there cost a refusal
-# on every question, while this one answered a real question in 7.5s after a 22.9s
-# search round.
+# `openrouter:openrouter/free` since 2026-08-28, and the reason it is not a model name
+# is that pinning one on a free tier has now failed three times. The defaults before it
+# were `deepseek-v4-flash-free`, which answered 429 `FreeUsageLimitError` to every
+# request this key made; `nemotron-3.5-lightning-free`, which spent 41 seconds reasoning
+# and never reached an answer; and `hy3-free`, which still works and is the only model
+# on Zen's free lineup that does. Measured against the live endpoint on 2026-08-28 with
+# this deployment's own question and tool schema, in two requests each, one offering the
+# tools and one with them withdrawn:
 #
-# It is a reasoning model and keeps its reasoning where it belongs. Round one puts the
-# thinking in `delta.reasoning` with `content` empty and emits the tool call; round two
-# returns 325 characters of answer in `content` and stops. That is worth recording
-# because the sibling `nemotron-3-ultra-free` looks identical and never fills `content`
-# at all, which is a different model and a 166-second dead end. Do not read across from
-# one to the other.
+#     hy3-free                  6 tool calls, then 267 characters of answer
+#     laguna-s-2.1-free         8 tool calls, then 503 Endpoint is unavailable
+#     ling-3.0-flash-fin-free   9 tool calls, then nothing at all
+#     big-pickle                429 FreeUsageLimitError
+#     mimo-v2.5-free            429 FreeUsageLimitError
+#     deepseek-v4-flash-free    400 Model is unavailable
+#
+# One working model behind a default is not a ladder, and the two that answer 429 are
+# capped per model rather than per key (see `engine.PRUNES_PROVIDER`), so nothing this
+# file can be edited to say would have made that lineup answer.
+#
+# `openrouter/free` is not a model either. It is OpenRouter's Free Models Router: it
+# picks a free model per request from whatever is up, filtered to the ones that support
+# the parameters the request actually carries, so a tool-calling turn is never routed to
+# a model that cannot call a tool. That moves "notice which free model died today" off
+# this file and onto the provider, which is the only place it can be done per request
+# instead of per commit.
+#
+# What it costs, recorded here rather than discovered later: the model changes from turn
+# to turn, so speed and answer quality vary in a way a pinned model's do not, and a
+# reader cannot tell which model wrote the answer in front of them. Availability over
+# consistency, deliberately. A 2.6B model that answers beats a 550B one that returns an
+# empty stream, which is what the two Nemotrons were doing when this was changed.
 #
 # This names the *first* candidate and not the only one. `engine.run_conversation`
 # still walks the rest of the ladder behind it, so a details panel reporting a failure
 # names whichever model refused last, which is usually not this one.
 #
 # Best-effort by nature: `app.current_model` only honours it if the provider actually
-# serves it, because Zen's free lineup rotates without notice and offering a model
-# that has been withdrawn is a button that returns a 404. When it is gone the first
-# model Zen does serve is used instead.
-DEFAULT_MODEL = os.getenv("SAGE_DEFAULT_MODEL", "opencode:hy3-free")
+# serves it, because a free lineup rotates without notice and offering a model that has
+# been withdrawn is a button that returns a 404. When it is gone the first model a ready
+# provider does serve is used instead.
+DEFAULT_MODEL = os.getenv("SAGE_DEFAULT_MODEL", "openrouter:openrouter/free")
+
+# --- OpenRouter ------------------------------------------------------------
+#
+# An OpenAI-compatible endpoint fronting 388 models, of which 21 are zero-priced
+# (measured 2026-08-28 off `GET /models` with this key). This deployment offers exactly
+# one, and it is the router rather than any of them.
+#
+# Measured before it was trusted (2026-08-28, this deployment's own question and tool
+# schema, three requests offering the tools and three with them withdrawn): three tool
+# calls out of three, routed across `minimax/minimax-m2.7:free`,
+# `poolside/laguna-s-2.1:free` and `dots-studio/dots-3-note-preview:free`, median 2.0s;
+# and prose on two of the three requests sent without tools, from
+# `nvidia/nemotron-3-super-120b-a12b:free` and `minimax/minimax-m3:free`. The third
+# returned tool calls and no prose, which is a refusal wearing a success code, and
+# `engine.run_turn` raises `empty` for it so the ladder walks past. Note what the router
+# did there that a pinned model cannot: the round that searched and the round that
+# answered were served by different models, so the turn did not inherit one model's
+# inability to write prose.
+OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+# Discovery still runs, because it is how the app learns the router is being served at
+# all; this is the fallback when `GET /models` fails, and the preference order applied
+# to whatever discovery returns. One entry, and the rule below stops it widening.
+OPENROUTER_MODELS = _env_list("SAGE_OPENROUTER_MODELS", ("openrouter/free",))
+# The mark is the router's own id, so the rule reads "offer exactly this". That is
+# unusual, and it is the point of the entry: 367 of the 388 models cost money this key
+# does not have, so a wider rule fills the ladder with rungs that return 402.
+#
+# `:free` is the wider rule someone will reach for, and it is worth knowing exactly
+# what it does. All 18 ids carrying that suffix are zero-priced and every one of them
+# would be offered, which hands their upkeep straight back to this file; nine of the
+# eighteen were rate-limited or structurally unable to answer on the sweep the router
+# sailed through. It also does not mean "the free models": three zero-priced ids do not
+# carry it, and one of them is the router itself, so `:free` swaps the one rung that
+# needs no checking for eighteen that do.
+OPENROUTER_FREE_MARKS = _env_list("SAGE_OPENROUTER_FREE_MARKS", ("openrouter/free",))
+# Off for a deployment with a paid OpenRouter balance, which should see what it can use.
+OPENROUTER_FREE_ONLY = os.getenv(
+    "SAGE_OPENROUTER_FREE_ONLY", "1"
+).strip().lower() not in ("0", "false", "no", "")
+# There is no `is_free_openrouter_model` to go with the marks above, and no
+# `is_free_zen_model` any more either. The rule is one line and it now lives once, on
+# `providers.OpenAICompatProvider._is_free`, which reads whichever marks its own
+# provider was built with. Two copies of a rule in two functions named after two
+# providers is the shape a divergence takes: one gets a fix, the other does not, and
+# nothing on screen says which one a given endpoint went through.
+
+
+# What a reader is shown for a served id, for the case the id is not a name at all.
+#
+# `openrouter/free` describes which free tier the request draws on and not the thing
+# answering: the model behind it is a different one every turn, so no specific model
+# name would be right either. `enigma` by the owner's instruction of 2026-08-28, the
+# instruction being that the reader should not be shown the billing arrangement.
+#
+# This deployment has no model picker, so the surfaces that read it are narrower than
+# they sound and both are prose: the failover notice, "X is unavailable (out of
+# credit), so Y answered instead", and the warning that a model cannot read an image.
+# Neither is a place for a slash and the word "free".
+#
+# The id is untouched everywhere it counts, which is upstream, in `Model.key`, in the
+# session state, in the feedback log and in the error card's technical details, so
+# nothing that measures a model ends up measuring a nickname. `Model.label` is the only
+# reader.
+#
+# No environment override, unlike every list above it. Those are ids or a flag, which a
+# comma-separated variable can carry; a mapping cannot be spelled in one without
+# inventing a syntax to get it wrong in.
+MODEL_LABELS = {"openrouter/free": "enigma"}
+
+
+def model_label(model: str) -> str:
+    """What to show for this served id, or "" to let the id speak for itself."""
+    return MODEL_LABELS.get(model or "", "")
+
 
 MISTRAL_MODELS = _env_list(
     "SAGE_MISTRAL_MODELS",
@@ -147,10 +240,28 @@ ZEN_FREE_ONLY = os.getenv("SAGE_ZEN_FREE_ONLY", "1").strip().lower() not in (
     "0", "false", "no", ""
 )
 
-
-def is_free_zen_model(model: str) -> bool:
-    lowered = (model or "").lower()
-    return any(mark and mark.lower() in lowered for mark in ZEN_FREE_MARKS)
+# Models never offered, however the endpoint lists them. This is "known not to work",
+# which is a different question from the free rule above: that one asks what the key can
+# pay for.
+#
+# Both Nemotrons, on the owner's report from the running app and confirmed against the
+# live endpoint on 2026-08-28. Asked this deployment's own question and tool schema,
+# `nemotron-3.5-lightning-free` held the connection open past a 300-second cap without
+# sending one byte, and `nemotron-3-ultra-free` answered 400 wrapping an upstream 404.
+# Neither is a model that can be waited for: the first spends more of a reader's time
+# than the whole rest of the ladder would, and the second is not being served at all
+# while the catalogue still advertises it.
+#
+# It has to be its own list, because taking a name out of `OPENCODE_MODELS` does not
+# remove it. That list is the preference *order* applied to whatever discovery returns,
+# and `OpenAICompatProvider._order` puts anything it does not name at the end of the
+# ladder rather than off it, so an unlisted model is a demoted model, and a demoted
+# model is still one a failover reaches. Emptying this list offers them again, which is
+# the right switch to have: a free tier that re-points an id at a working backend is a
+# thing that has happened here.
+ZEN_DENY = _env_list(
+    "SAGE_ZEN_DENY", ("nemotron-3.5-lightning-free", "nemotron-3-ultra-free")
+)
 
 # Substrings marking models that cannot call tools. Those answer from a single
 # retrieval pass instead of the search/read loop. The app also falls back
@@ -199,13 +310,23 @@ INLINE_CITATIONS = os.getenv("SAGE_INLINE_CITATIONS", "1").strip().lower() not i
 #
 # On again because the evidence changed rather than the opinion. `engine._read_round`
 # now watches `Turn.wants_tools`, which is set by the first tool-call fragment rather
-# than at the end of the round, and on every model this deployment serves a tool round
-# carries no content whatsoever: the round that searches sends tool-call fragments and
-# not one character. There is nothing to wipe because there was never anything to show.
+# than at the end of the round, and on the Zen models a tool round carries no content
+# whatsoever: the round that searches sends tool-call fragments and not one character.
+# There is nothing to wipe because there was never anything to show.
 #
-# Set `SAGE_STREAM=0` if a future model narrates before it searches. The engine logs a
-# warning naming the model each time it has to withdraw text, so that decision has
-# evidence behind it too.
+# "Every model this deployment serves" is what that sentence used to say, and the
+# default is no longer one of them. `openrouter/free` routes to a different model per
+# request, and some of them narrate: measured on 2026-08-28, one round opened with three
+# characters and then asked for a tool. Nothing reached the reader, because that is the
+# guarantee `_quiet_while_working` exists for: a model is streamed only after it has
+# completed a tool round in silence, and one that narrates never earns it. The cost is
+# real and worth knowing rather than rediscovering, which is why it is written here: the
+# router's answers arrive whole rather than a word at a time, on any turn where the
+# model it picked said something before searching.
+#
+# Set `SAGE_STREAM=0` if that becomes the common case rather than the occasional one.
+# The engine logs a warning naming the model each time it has to withdraw text, so that
+# decision has evidence behind it too.
 STREAM = os.getenv("SAGE_STREAM", "1").strip().lower() not in ("0", "false", "no", "")
 
 MAX_TOKENS = _env_int("SAGE_MAX_TOKENS", 1800)
@@ -318,7 +439,11 @@ FEEDBACK_LOG = os.getenv("SAGE_FEEDBACK_LOG", "")
 SNAPSHOT_FILE = os.getenv("SAGE_SNAPSHOT_FILE", "./docs_snapshot.json")
 
 
-API_KEY_VARS = {"mistral": "MISTRAL_API_KEY", "opencode": "OPENCODE_API_KEY"}
+API_KEY_VARS = {
+    "openrouter": "OPENROUTER_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "opencode": "OPENCODE_API_KEY",
+}
 
 
 def api_key(provider: str = "mistral") -> str:

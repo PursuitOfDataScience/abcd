@@ -76,6 +76,14 @@ class Profile:
     no_results: str = ""
     # Prepended to the retrieved context for models that cannot call tools.
     grounding_instruction: str = ""
+    # Sent as a system message on the last request of a tool turn, where the tools
+    # have been withdrawn. Same move as `grounding_instruction` and for the same
+    # reason: with nothing left to call, the only thing a model can do is answer, and
+    # it has to be told that or it writes the call out as prose. See
+    # `engine.run_turn`. Empty means the last round goes out unannotated, which is
+    # what a deployment that has not written this copy should get rather than a
+    # sentence in somebody else's voice.
+    last_round_instruction: str = ""
     # The noun used in status lines: "Searching {searching_noun} for …".
     searching_noun: str = "the docs"
 

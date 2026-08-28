@@ -192,6 +192,21 @@ PROFILE = Profile(
         "in each header, and do not end with a Sources list — one is printed for you. "
         "If they do not cover the question, say so."
     ),
+    last_round_instruction=(
+        "This is the last request of this turn and the tools are gone: there is no "
+        "further search and no further read, so answer now, from the sections already "
+        "retrieved above. Never write a search call, a function call, or any sentence "
+        "about looking something up or being unable to finish, because there is "
+        "nothing left to call and no step left to describe. Writing a call out as text "
+        "counts: `<tool_call>`, `<function=...>`, `[TOOL_CALLS]` and a bare JSON "
+        "object with a `name` in it are not tool calls here. Nothing will parse them "
+        "and the reader is shown them exactly as you type them.\n\n"
+        "What you have retrieved is very likely enough. Answer every part of the "
+        "question it covers, in full, and say plainly which part the articles did not "
+        "cover. A partial answer with its gap named is worth far more to the reader "
+        "than no answer at all, and saying nothing is the one outcome that helps "
+        "nobody."
+    ),
     searching_noun="the articles",
     page_title="Ask about Dr. Yu's writing",
     page_icon="💬",

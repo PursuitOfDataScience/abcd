@@ -303,6 +303,12 @@ def run_turn(
             final_text = text
             break
         if round_number == rounds:
+            # Rarer than it was, and it now means something narrower. The request that
+            # produced this round went out with no tools at all (see the bottom of the
+            # loop), so a model that reaches here wrote a tool call against an empty
+            # tool list and its text, if any, is a sentence about searching rather than
+            # an answer. That is still narration and is still not promoted: the ladder
+            # is told `empty` below and moves to a candidate that will answer.
             logger.warning("Tool-round limit reached without a final answer")
             break
         # The other way a model can fail to converge, and the one the round cap does
@@ -323,7 +329,44 @@ def run_turn(
             messages.append(
                 llm.tool_result_message(call, runner.run(call["name"], call["input"]))
             )
-        turn = llm.start(provider, model.id, messages, schemas)
+        # The last request of the turn goes out with the tools withdrawn.
+        #
+        # A tool call is not an answer, and the loop above had no way of saying so to
+        # the model. The round cap was never told to it, so a model that answers every
+        # round with another tool call spent the last request the way it spent the
+        # first, and the loop fell out of the bottom into the `empty` below with
+        # everything the turn had read still sitting unused in `messages`. Both
+        # Nemotrons did exactly that here, and it is not a property of one bad model:
+        # measured on 2026-08-28, `ling-3.0-flash-fin-free` answered this deployment's
+        # own question with nine tool calls and not one word, and the free router's
+        # underlying model does it about one request in three.
+        #
+        # Withdrawing the tools is the fix rather than a bigger cap, because the cap is
+        # not what binds. Rule 3 of the system prompt tells the model to rephrase and
+        # search again when a search misses, and that rule has no stopping condition in
+        # it: a fact recorded in a single clause reads as a miss for as long as you keep
+        # searching for an article about it. So the app supplies the stopping condition.
+        # With nothing left to call, the only move a model has is the answer.
+        #
+        # `_grounded` above takes the tools away the same way and for the same reason,
+        # and it carries the profile's instruction with it because a model given no
+        # tools and not told so writes the call out as prose, where the reader sees it
+        # verbatim. The same instruction goes here, and for a profile that has not
+        # written one the request simply goes out without tools, which is still strictly
+        # better than a seventh identical search.
+        #
+        # Worth being exact about which request this is. `rounds` tool rounds means
+        # `rounds + 1` requests, this one is the last, and it is reached only by a model
+        # that has called a tool on every round before it. A turn that answers in two
+        # rounds never comes near it, so the common path is unchanged.
+        last_round = round_number + 1 == rounds
+        if last_round and profile.last_round_instruction:
+            messages.append(
+                {"role": "system", "content": profile.last_round_instruction}
+            )
+        turn = llm.start(
+            provider, model.id, messages, None if last_round else schemas
+        )
 
     sources = _sources(runner)
     if runner.queries and not sources:
@@ -359,6 +402,13 @@ def run_turn(
             "asked for no tool and returned no text" if not turn.tool_calls
             else "still calling tools when it ran out of rounds or seconds",
         )
+        # The second of those two shapes gained a case when the last round lost its
+        # tools, and it is worth naming because it looks like the others and is not:
+        # a model still holding tool calls here either ran out of seconds mid-loop
+        # (`MODEL_BUDGET`) or wrote a call against an empty tool list on the withdrawn
+        # round, having been told in as many words that there was nothing left to call.
+        # The first is a model that was too slow, the second is one that would not
+        # stop, and only the second is now the common way of reaching this line.
         raise llm.AssistantError("empty")
 
     yield Event(

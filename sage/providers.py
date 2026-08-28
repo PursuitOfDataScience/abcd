@@ -1,10 +1,18 @@
 """Chat providers behind one interface, so the model is a runtime choice.
 
-Two are supported:
+Three are supported:
 
-* **Mistral**, via the official SDK.
+* **OpenRouter**, an OpenAI-compatible endpoint at `https://openrouter.ai/api/v1`.
+  This deployment offers one entry there and it is a router rather than a model:
+  `openrouter/free` picks a free model per request from whatever is currently up. See
+  `config.OPENROUTER_BASE_URL` for what that buys and what it costs.
 * **OpenCode Zen**, an OpenAI-compatible endpoint at `https://opencode.ai/zen/v1`
   that fronts a set of free models. Useful when a paid key runs out of credit.
+* **Mistral**, via the official SDK.
+
+The two OpenAI-compatible ones share `OpenAICompatProvider` and differ only in the
+data handed to it, which is the whole reason the class takes its lineup rules as
+arguments rather than reading Zen's out of `config` itself.
 
 Both normalise onto `Chunk`, so nothing downstream knows which one is in use.
 Model lists are discovered from the provider at runtime rather than hardcoded,
@@ -26,6 +34,30 @@ logger = logging.getLogger(__name__)
 
 MISTRAL = "mistral"
 OPENCODE = "opencode"
+OPENROUTER = "openrouter"
+
+#: Every provider this module can build, in the order the app should prefer them. Read
+#: by `app.configured_providers`, which filters it to the ones with a key, and by
+#: `parse_key`, so a new provider is added here and not in three places.
+#:
+#: Set by the owner on 2026-08-28, in these words: the OpenRouter free model first, and
+#: if it fails then OpenCode, and so on. So the tuple is the instruction, and the reasons
+#: below are why it is also the right order rather than what chose it.
+#:
+#: OpenRouter leads because it is the only one of the three that does not need a name in
+#: this file kept true by hand: its entry is a router, so a model that stops answering is
+#: the provider's problem to route around rather than a commit here. It is also the only
+#: provider whose *first* failure is worth much: a refusal from a router is a refusal
+#: from whatever it picked, and the next rung is a different endpoint entirely.
+#:
+#: Zen second, because its key is free and, on the measurement in `config.ZEN_DENY`, it
+#: still has one model that answers. Mistral last, and this is the half that changed:
+#: it used to sit second, from before OpenRouter existed. It is paid, out of credit on
+#: this deployment, and offers three models, so a walk that reached it spent three round
+#: trips learning the same thing three times before it could get to a free model that
+#: works. Now it is only reached when nothing free will answer, which is the one
+#: situation a spent paid key is worth asking.
+NAMES = (OPENROUTER, OPENCODE, MISTRAL)
 
 
 @dataclass(frozen=True)
@@ -41,12 +73,23 @@ class Model:
     def label(self) -> str:
         """The model's own name, and nothing else.
 
-        There was a provider prefix — "Zen · deepseek-v4-flash-free" — which spent a
+        There was a provider prefix, "Zen · deepseek-v4-flash-free", which spent a
         third of the picker's width restating what the rest of the row already said,
         on every line. The id alone identifies the model, and `mistral-` on the front
         of the Mistral ones does the same job the prefix was doing.
+
+        `config.MODEL_LABELS` gets the first word, for the one case the sentence above
+        does not cover: an id that is not a name at all. A router's id describes which
+        free tier the request draws on, which is not a thing to put in front of a
+        reader, and this deployment does put labels in front of readers: the failover
+        notice and the cannot-read-images warning are both prose with a `label` in the
+        middle of them.
+
+        Only this property reads that mapping, so the id stays untouched in `key`,
+        upstream, in the session state, in the feedback log and in the error card's
+        technical details.
         """
-        return self.id
+        return config.model_label(self.id) or self.id
 
     @property
     def supports_tools(self) -> bool:
@@ -162,7 +205,7 @@ class MistralProvider:
                     logger.debug("Ignoring error closing the stream", exc_info=True)
 
 
-# --- OpenAI-compatible (OpenCode Zen) --------------------------------------
+# --- OpenAI-compatible (OpenRouter, OpenCode Zen) --------------------------
 
 
 class OpenAICompatProvider:
@@ -174,16 +217,56 @@ class OpenAICompatProvider:
         base_url: str,
         name: str = OPENCODE,
         preferred: tuple[str, ...] | None = None,
+        free_marks: tuple[str, ...] | None = None,
+        free_only: bool | None = None,
+        deny: tuple[str, ...] | None = None,
     ) -> None:
         self.name = name
         self._key = api_key
         self._base = base_url.rstrip("/")
         # Discovery returns the catalogue in arbitrary order. This is the order
         # we would choose, and it decides both the picker's default and what an
-        # automatic failover lands on — so it must not be alphabetical.
+        # automatic failover lands on, so it must not be alphabetical.
         self._preferred = (
             config.OPENCODE_MODELS if preferred is None else tuple(preferred)
         )
+        # The three rules that turn a served catalogue into a lineup: which ids this
+        # key can pay for, whether to apply that at all, and which ids are known not to
+        # work whoever is paying. Arguments rather than reads of `config`, because there
+        # are two OpenAI-compatible providers now and they answer all three differently.
+        # Zen's free rule is a naming convention, so it catches a model this repository
+        # has never heard of; OpenRouter's names exactly the one model it offers, so
+        # discovery cannot widen it. Same field, opposite intent.
+        #
+        # `None` means Zen's, so a caller that predates the second provider keeps its
+        # behaviour. `build` passes all three explicitly.
+        #
+        # Kept as `None` rather than resolved here, and read through the properties
+        # below. Resolving at construction would move when an override takes effect: a
+        # `config` value patched after the provider was built used to count and would
+        # silently stop counting, which is a behaviour change hiding inside a
+        # refactor. The properties keep the old late binding.
+        self._free_marks_setting = None if free_marks is None else tuple(free_marks)
+        self._free_only_setting = None if free_only is None else bool(free_only)
+        self._deny_setting = None if deny is None else tuple(deny)
+
+    @property
+    def _free_marks(self) -> tuple[str, ...]:
+        if self._free_marks_setting is None:
+            return config.ZEN_FREE_MARKS
+        return self._free_marks_setting
+
+    @property
+    def _free_only(self) -> bool:
+        if self._free_only_setting is None:
+            return config.ZEN_FREE_ONLY
+        return self._free_only_setting
+
+    @property
+    def _deny(self) -> tuple[str, ...]:
+        if self._deny_setting is None:
+            return config.ZEN_DENY
+        return self._deny_setting
 
     def _headers(self) -> dict:
         return {
@@ -209,17 +292,33 @@ class OpenAICompatProvider:
             # The endpoint serves this deployment's paid lineup alongside the free
             # one, and offering a model there is no balance for is offering a button
             # that returns a 402. Filtered here rather than in the picker so nothing
-            # downstream — failover included — can select one.
-            if found and config.ZEN_FREE_ONLY:
-                free = [name for name in found if config.is_free_zen_model(name)]
+            # downstream, failover included, can select one.
+            if found and self._free_only:
+                free = [name for name in found if self._is_free(name)]
                 if free:
                     found = free
                 else:
                     logger.warning(
-                        "%s served %d models and none looked free; offering all of "
-                        "them. Check SAGE_ZEN_FREE_MARKS against the current lineup.",
-                        self.name, len(found),
+                        "%s served %d models and none matched its free rule (%s); "
+                        "offering all of them. Check the marks against the current "
+                        "lineup.", self.name, len(found), ", ".join(self._free_marks),
                     )
+            # Known not to work, which is a different question from what the key can pay
+            # for, and applied after it so a denied id cannot be reinstated by the
+            # fall-through above. Never allowed to empty the list: a deny list that
+            # takes the last model off the ladder has turned a bad answer into no
+            # answer, and every id on it was recorded as broken at one moment rather
+            # than for all time.
+            refused = [name for name in found if self._denied(name)]
+            if refused and len(refused) < len(found):
+                logger.info("%s: not offering %s", self.name, ", ".join(refused))
+                found = [name for name in found if not self._denied(name)]
+            elif refused:
+                logger.warning(
+                    "%s served only models on its deny list (%s); offering them "
+                    "anyway rather than offering nothing.",
+                    self.name, ", ".join(refused),
+                )
             if found:
                 return [Model(self.name, model_id) for model_id in self._order(found)]
             logger.warning("%s returned no models; using the configured list", self.name)
@@ -227,6 +326,25 @@ class OpenAICompatProvider:
             logger.warning("Could not list %s models (%s); using configured list",
                            self.name, exc)
         return [Model(self.name, model_id) for model_id in self._preferred]
+
+    def _is_free(self, model_id: str) -> bool:
+        lowered = (model_id or "").lower()
+        return any(mark and mark.lower() in lowered for mark in self._free_marks)
+
+    def _denied(self, model_id: str) -> bool:
+        """Exact ids, not substrings, unlike the free marks above.
+
+        The two rules read alike and must not behave alike. A free mark is a naming
+        convention and is meant to match a family: `-free` catches a model nobody has
+        heard of yet, which is the point of writing a rule instead of a list. A deny
+        entry is the opposite claim, that one particular id was measured and does not
+        answer, and there is no family behind it to generalise to. Matching loosely
+        would invite a shorthand entry, `nemotron`, that reads as "the ones that
+        stopped answering" and means "every model with that word in its name", which on
+        2026-08-28 would have included `nemotron-3-super-120b-a12b:free`, the model
+        OpenRouter routed a working answer to on the same day.
+        """
+        return (model_id or "") in self._deny
 
     def _order(self, found: list[str]) -> list[str]:
         """Preferred models first, in preferred order; then the rest, alphabetically."""
@@ -358,15 +476,42 @@ def build(name: str, api_key: str) -> Provider:
     if name == MISTRAL:
         return MistralProvider(api_key)
     if name == OPENCODE:
-        return OpenAICompatProvider(api_key, config.OPENCODE_BASE_URL)
+        return OpenAICompatProvider(
+            api_key,
+            config.OPENCODE_BASE_URL,
+            name=OPENCODE,
+            preferred=config.OPENCODE_MODELS,
+            free_marks=config.ZEN_FREE_MARKS,
+            free_only=config.ZEN_FREE_ONLY,
+            deny=config.ZEN_DENY,
+        )
+    if name == OPENROUTER:
+        # No adapter of its own, and that is the argument for choosing this provider
+        # rather than an oversight: an OpenAI-compatible endpoint and an entry of data
+        # is the whole integration. The line that makes it worth having is
+        # `OPENROUTER_MODELS`, which is one router rather than a lineup, so there is no
+        # deny list here and nothing to keep true by hand.
+        return OpenAICompatProvider(
+            api_key,
+            config.OPENROUTER_BASE_URL,
+            name=OPENROUTER,
+            preferred=config.OPENROUTER_MODELS,
+            free_marks=config.OPENROUTER_FREE_MARKS,
+            free_only=config.OPENROUTER_FREE_ONLY,
+            deny=(),
+        )
     raise ValueError(f"Unknown provider: {name}")
 
 
 def parse_key(value: str) -> Model | None:
-    """`'opencode:deepseek-v4-flash'` -> Model, or None if malformed."""
+    """`'opencode:deepseek-v4-flash'` -> Model, or None if malformed.
+
+    Split once from the left, which is what makes `openrouter:openrouter/free` parse:
+    the model half may carry a slash, and does for every id OpenRouter serves.
+    """
     if not value or ":" not in value:
         return None
     provider, model_id = value.split(":", 1)
-    if provider not in (MISTRAL, OPENCODE) or not model_id:
+    if provider not in NAMES or not model_id:
         return None
     return Model(provider, model_id)
